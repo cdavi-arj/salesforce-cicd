@@ -35,19 +35,19 @@ jobs:
           node-version: 20
 
       # ---------------------------------
-      # Install Node.js dependencies (including sfdx-git-delta)
-      # ---------------------------------
-      - name: Install Node Dependencies
-        run: |
-          npm ci
-
-      # ---------------------------------
       # Install Salesforce CLI
       # ---------------------------------
       - name: Install Salesforce CLI
         run: |
           npm install --global @salesforce/cli
           sf version
+
+      # ---------------------------------
+      # Install sfdx-git-delta locally (dev dependency)
+      # ---------------------------------
+      - name: Install sfdx-git-delta
+        run: |
+          npm install --save-dev sfdx-git-delta
 
       # ---------------------------------
       # Install Code Analyzer Plugin
