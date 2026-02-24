@@ -11,7 +11,7 @@ jobs:
 
     steps:
       # ---------------------------------
-      # Checkout
+      # Checkout repository
       # ---------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -27,23 +27,23 @@ jobs:
           sf version
 
       # ---------------------------------
-      # Install Plugins
+      # Install Required Plugins
       # ---------------------------------
       - name: Install Plugins
         run: |
           echo y | sf plugins install sfdx-git-delta
-          echo y | sf plugins install @salesforce/sfdx-scanner
+          echo y | sf plugins install @salesforce/code-analyzer
           sf plugins
 
       # ---------------------------------
-      # Run Code Quality Scan
+      # Run Code Quality Scan (Analyzer v5)
+      # Blocks only severity >= 4
       # ---------------------------------
       - name: Run Code Quality Scan
         run: |
-          sf scanner run \
-            --target "force-app" \
-            --format table \
-            --severity-threshold 3
+          sf code-analyzer run \
+            --workspace force-app \
+            --severity-threshold 4
 
       # ---------------------------------
       # Generate Delta
@@ -71,7 +71,7 @@ jobs:
           fi
 
       # ---------------------------------
-      # Authenticate to QA
+      # Authenticate to QA (Sandbox)
       # ---------------------------------
       - name: Authenticate to QA
         if: steps.check_delta.outputs.skip == 'false'
@@ -85,7 +85,9 @@ jobs:
             --instance-url https://test.salesforce.com
 
       # ---------------------------------
-      # Extract Apex Tests from PR
+      # Extract Apex Tests from PR Body
+      # Expected pattern:
+      # Apex::[Class1,Class2]::Apex
       # ---------------------------------
       - name: Extract Apex Tests
         if: steps.check_delta.outputs.skip == 'false'
@@ -95,13 +97,14 @@ jobs:
           TESTS=$(echo "$BODY" | sed -n 's/.*Apex::\[\(.*\)\]::Apex.*/\1/p')
 
           if [ -z "$TESTS" ]; then
+            echo "No test pattern found. Running all tests."
             TESTS="all"
           fi
 
           echo "tests=$TESTS" >> $GITHUB_OUTPUT
 
       # ---------------------------------
-      # Validate Deployment with Coverage
+      # Validate Deployment (with coverage JSON)
       # ---------------------------------
       - name: Validate Deployment
         if: steps.check_delta.outputs.skip == 'false'
