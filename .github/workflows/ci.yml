@@ -35,17 +35,15 @@ jobs:
           sf version
 
       # ---------------------------------
-      # Install Required Plugins
+      # Install Code Analyzer Plugin
       # ---------------------------------
-      - name: Install Plugins
+      - name: Install Code Analyzer
         run: |
-          sf plugins install sfdx-git-delta --force
           sf plugins install code-analyzer --force
-          sf plugins
 
       # ---------------------------------
       # Run Code Quality Scan
-      # Blocks severity >= 3 (Moderate+)
+      # Blocks severity >= 3
       # ---------------------------------
       - name: Run Code Quality Scan
         run: |
@@ -54,7 +52,7 @@ jobs:
             --severity-threshold 3
 
       # ---------------------------------
-      # Generate Delta
+      # Generate Delta (STABLE METHOD)
       # ---------------------------------
       - name: Generate Delta
         run: |
@@ -63,9 +61,9 @@ jobs:
 
           git fetch origin $BASE_BRANCH
 
-          sf sfdx-git-delta:source:delta \
-            --to "HEAD" \
-            --from "origin/$BASE_BRANCH" \
+          npx sfdx-git-delta source delta \
+            --to HEAD \
+            --from origin/$BASE_BRANCH \
             --output-dir delta \
             --generate-delta
 
@@ -98,7 +96,6 @@ jobs:
 
       # ---------------------------------
       # Extract Apex Tests from PR Body
-      # Pattern: Apex::[Class1,Class2]::Apex
       # ---------------------------------
       - name: Extract Apex Tests
         if: steps.check_delta.outputs.skip == 'false'
@@ -108,7 +105,6 @@ jobs:
           TESTS=$(echo "$BODY" | sed -n 's/.*Apex::\[\(.*\)\]::Apex.*/\1/p')
 
           if [ -z "$TESTS" ]; then
-            echo "No test pattern found. Running all tests."
             TESTS="all"
           fi
 
@@ -138,7 +134,7 @@ jobs:
           fi
 
       # ---------------------------------
-      # Enforce Minimum Coverage 85%
+      # Enforce Coverage >= 85%
       # ---------------------------------
       - name: Enforce Coverage >= 85%
         if: steps.check_delta.outputs.skip == 'false'
@@ -152,9 +148,6 @@ jobs:
             exit 1
           fi
 
-      # ---------------------------------
-      # Success
-      # ---------------------------------
       - name: Success
         if: success()
         run: echo "QA Validation completed successfully."
