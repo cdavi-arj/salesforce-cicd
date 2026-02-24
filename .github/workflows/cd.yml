@@ -10,22 +10,49 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      # ---------------------------------
+      # Checkout repository
+      # ---------------------------------
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # ---------------------------------
+      # Install dependencies
+      # ---------------------------------
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq bc
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # ---------------------------------
+      # Install Salesforce CLI
+      # ---------------------------------
       - name: Install Salesforce CLI
         run: |
-          npm install -g @salesforce/cli@latest
+          npm install -g @salesforce/cli
           sf version
 
+      # ---------------------------------
+      # Install Plugins
+      # ---------------------------------
       - name: Install sfdx-git-delta
         run: |
           echo y | sf plugins install sfdx-git-delta
-          sf plugins
 
-      # Generate delta between last two commits
+      - name: Install Code Analyzer (optional)
+        run: |
+          sf plugins install code-analyzer --force
+
+      # ---------------------------------
+      # Generate Delta
+      # ---------------------------------
       - name: Generate Delta
         run: |
           mkdir -p delta
@@ -35,7 +62,9 @@ jobs:
             --output-dir delta \
             --generate-delta
 
-      # Skip deploy if delta is empty
+      # ---------------------------------
+      # Check if delta is empty
+      # ---------------------------------
       - name: Check Delta
         id: check_delta
         run: |
@@ -46,11 +75,15 @@ jobs:
             echo "Delta found"
             echo "skip=false" >> $GITHUB_OUTPUT
 
+      # ---------------------------------
       # Create JWT Key
+      # ---------------------------------
       - name: Create JWT Key
         run: echo "${{ secrets.SF_JWT_KEY }}" > server.key
 
+      # ---------------------------------
       # Authenticate QA Sandbox
+      # ---------------------------------
       - name: Authenticate QA
         if: steps.check_delta.outputs.skip == 'false'
         run: |
@@ -61,29 +94,31 @@ jobs:
             --alias qa \
             --instance-url https://test.salesforce.com
 
-      # Determine tests to run from merge commit message (if any)
+      # ---------------------------------
+      # Determine tests to run from commit message
+      # ---------------------------------
       - name: Set Tests to Run
         if: steps.check_delta.outputs.skip == 'false'
         id: tests
         run: |
           TESTS="none"
-          if [ ! -z "${{ github.event.head_commit.message }}" ]; then
-            BODY="${{ github.event.head_commit.message }}"
-            MATCH=$(echo "$BODY" | sed -n 's/.*Apex::\[\(.*\)\]::Apex.*/\1/p')
-            if [ ! -z "$MATCH" ]; then
-              TRIMMED=$(echo "$MATCH" | tr -d '[:space:]')
-              if [ "$TRIMMED" = "all" ]; then
-                TESTS="all"
-              elif [ "$TRIMMED" = "none" ]; then
-                TESTS="none"
-              else
-                TESTS="$MATCH"
-              fi
+          BODY="${{ github.event.head_commit.message }}"
+          MATCH=$(echo "$BODY" | sed -n 's/.*Apex::\[\(.*\)\]::Apex.*/\1/p')
+          if [ ! -z "$MATCH" ]; then
+            TRIMMED=$(echo "$MATCH" | tr -d '[:space:]')
+            if [ "$TRIMMED" = "all" ]; then
+              TESTS="all"
+            elif [ "$TRIMMED" = "none" ]; then
+              TESTS="none"
+            else
+              TESTS="$MATCH"
             fi
           fi
           echo "tests=$TESTS" >> $GITHUB_OUTPUT
 
-      # Deploy delta
+      # ---------------------------------
+      # Deploy Delta
+      # ---------------------------------
       - name: Deploy Delta to QA
         if: steps.check_delta.outputs.skip == 'false'
         run: |
@@ -114,6 +149,9 @@ jobs:
               --tests "$TESTS" \
               --wait 30
 
+      # ---------------------------------
+      # Success
+      # ---------------------------------
       - name: Success
         if: success()
         run: echo "Deployment to QA completed successfully."
