@@ -46,34 +46,18 @@ jobs:
         run: |
           echo y | sf plugins install sfdx-git-delta
 
-      - name: Install Code Analyzer (optional)
-        run: |
-          sf plugins install code-analyzer --force
-
       # ---------------------------------
       # Generate Delta
       # ---------------------------------
       - name: Generate Delta
         run: |
           mkdir -p delta
+          # tenta gerar delta do último commit
           sf sgd source delta \
             --to HEAD \
             --from HEAD~1 \
             --output-dir delta \
-            --generate-delta
-
-      # ---------------------------------
-      # Check if delta is empty
-      # ---------------------------------
-      - name: Check Delta
-        id: check_delta
-        run: |
-          if [ -z "$(ls -A delta)" ]; then
-            echo "No changes to deploy. Skipping."
-            echo "skip=true" >> $GITHUB_OUTPUT
-          else
-            echo "Delta found"
-            echo "skip=false" >> $GITHUB_OUTPUT
+            --generate-delta || echo "No delta generated"
 
       # ---------------------------------
       # Create JWT Key
@@ -85,7 +69,6 @@ jobs:
       # Authenticate QA Sandbox
       # ---------------------------------
       - name: Authenticate QA
-        if: steps.check_delta.outputs.skip == 'false'
         run: |
           sf org login jwt \
             --client-id ${{ secrets.SF_CLIENT_ID }} \
@@ -98,7 +81,6 @@ jobs:
       # Determine tests to run from commit message
       # ---------------------------------
       - name: Set Tests to Run
-        if: steps.check_delta.outputs.skip == 'false'
         id: tests
         run: |
           TESTS="none"
@@ -117,17 +99,25 @@ jobs:
           echo "tests=$TESTS" >> $GITHUB_OUTPUT
 
       # ---------------------------------
-      # Deploy Delta
+      # Deploy Delta or full source
       # ---------------------------------
-      - name: Deploy Delta to QA
-        if: steps.check_delta.outputs.skip == 'false'
+      - name: Deploy to QA
         run: |
           TESTS="${{ steps.tests.outputs.tests }}"
+          
+          # Se delta estiver vazio, deploy completo de force-app
+          DIR="delta"
+          if [ ! -d "$DIR" ] || [ -z "$(ls -A $DIR)" ]; then
+            echo "Delta empty or missing. Deploying full force-app..."
+            DIR="force-app"
+          else
+            echo "Deploying delta..."
+          fi
 
           if [ "$TESTS" = "none" ]; then
             echo "No tests specified. Running relevant tests only."
             sf project deploy start \
-              --source-dir delta \
+              --source-dir $DIR \
               --target-org qa \
               --test-level RunRelevantTests \
               --wait 30
@@ -135,7 +125,7 @@ jobs:
           elif [ "$TESTS" = "all" ]; then
             echo "Running all tests..."
             sf project deploy start \
-              --source-dir delta \
+              --source-dir $DIR \
               --target-org qa \
               --test-level RunAllTestsInOrg \
               --wait 30
@@ -143,7 +133,7 @@ jobs:
           else
             echo "Running specified tests: $TESTS"
             sf project deploy start \
-              --source-dir delta \
+              --source-dir $DIR \
               --target-org qa \
               --test-level RunSpecifiedTests \
               --tests "$TESTS" \
