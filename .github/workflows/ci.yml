@@ -19,6 +19,14 @@ jobs:
           fetch-depth: 0
 
       # ---------------------------------
+      # Install dependencies (jq + bc)
+      # ---------------------------------
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq bc
+
+      # ---------------------------------
       # Install Salesforce CLI
       # ---------------------------------
       - name: Install Salesforce CLI
@@ -31,13 +39,13 @@ jobs:
       # ---------------------------------
       - name: Install Plugins
         run: |
-          echo y | sf plugins install sfdx-git-delta
-          echo y | sf plugins install @salesforce/code-analyzer
+          sf plugins install sfdx-git-delta --force
+          sf plugins install code-analyzer --force
           sf plugins
 
       # ---------------------------------
-      # Run Code Quality Scan (Analyzer v5)
-      # Blocks only severity >= 4
+      # Run Code Quality Scan
+      # Blocks severity >= 4
       # ---------------------------------
       - name: Run Code Quality Scan
         run: |
@@ -46,19 +54,23 @@ jobs:
             --severity-threshold 4
 
       # ---------------------------------
-      # Generate Delta
+      # Generate Delta from PR base branch
       # ---------------------------------
       - name: Generate Delta
         run: |
           mkdir -p delta
+          BASE_BRANCH=${{ github.event.pull_request.base.ref }}
+
+          git fetch origin $BASE_BRANCH
+
           sf sgd source delta \
             --to "HEAD" \
-            --from "origin/develop" \
+            --from "origin/$BASE_BRANCH" \
             --output-dir delta \
             --generate-delta
 
       # ---------------------------------
-      # Check if Delta has changes
+      # Check if Delta is Empty
       # ---------------------------------
       - name: Check if Delta is Empty
         id: check_delta
@@ -104,7 +116,7 @@ jobs:
           echo "tests=$TESTS" >> $GITHUB_OUTPUT
 
       # ---------------------------------
-      # Validate Deployment (with coverage JSON)
+      # Validate Deployment
       # ---------------------------------
       - name: Validate Deployment
         if: steps.check_delta.outputs.skip == 'false'
@@ -133,9 +145,17 @@ jobs:
         if: steps.check_delta.outputs.skip == 'false'
         run: |
           COVERAGE=$(jq '.result.summary.testRunCoverage' coverage/test-result-codecoverage.json)
+
           echo "Org Coverage: $COVERAGE%"
 
           if (( $(echo "$COVERAGE < 85" | bc -l) )); then
             echo "Coverage is below 85%. Failing pipeline."
             exit 1
           fi
+
+      # ---------------------------------
+      # Success Message
+      # ---------------------------------
+      - name: Success
+        if: success()
+        run: echo "QA Validation completed successfully."
