@@ -1,4 +1,4 @@
-name: PR Validation - QA
+name: Validate and Deploy to QA
 
 on:
   pull_request:
@@ -10,86 +10,57 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout completo (necessário para delta)
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # Instalar CLI moderna (para deploy)
-      - name: Install Salesforce CLI (sf)
+      - name: Install Salesforce CLI
         run: |
-          npm install --global @salesforce/cli@latest
+          npm install --global @salesforce/cli
           sf version
 
-      # Instalar CLI legacy (para delta)
-      - name: Install SFDX CLI (legacy)
+      - name: Install sfdx-git-delta plugin
         run: |
-          npm install --global sfdx-cli
-          sfdx version
+          echo y | sf plugins install sfdx-git-delta
+          sf plugins
 
-      # Instalar plugin delta no CLI legacy
-      - name: Install sfdx-git-delta
-        run: |
-          echo y | sfdx plugins:install sfdx-git-delta
-          sfdx plugins
-
-      # 🔹 Gerar Delta
       - name: Generate Delta
         run: |
-          sfdx sgd:source:delta \
-            --to HEAD \
-            --from origin/develop \
-            --output delta \
+          sf sgd source delta \
+            --to "HEAD" \
+            --from "origin/develop" \
+            --output-dir delta \
             --generate-delta
 
-      # 🔥 Extrair testes da PR
-      - name: Extract Apex Tests From PR
-        id: extract_tests
+      - name: Authenticate to QA (Sandbox)
         run: |
-          PR_BODY="${{ github.event.pull_request.body }}"
-
-          if [[ "$PR_BODY" =~ Apex::\[(.*)\]::Apex ]]; then
-            TESTS="${BASH_REMATCH[1]}"
-
-            if [[ "$TESTS" == "all" ]]; then
-              echo "testlevel=RunLocalTests" >> $GITHUB_OUTPUT
-            else
-              echo "testlevel=RunSpecifiedTests" >> $GITHUB_OUTPUT
-              echo "tests=$TESTS" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "testlevel=RunLocalTests" >> $GITHUB_OUTPUT
-          fi
-
-      # Criar chave JWT
-      - name: Create JWT Key
-        run: echo "${{ secrets.SF_JWT_KEY }}" > server.key
-
-      # Login Sandbox QA
-      - name: Authenticate QA Sandbox
-        run: |
+          echo "${{ secrets.SF_JWT_KEY_QA }}" > server.key
           sf org login jwt \
-            --client-id ${{ secrets.SF_CLIENT_ID }} \
+            --client-id ${{ secrets.SF_CLIENT_ID_QA }} \
             --jwt-key-file server.key \
             --username ${{ secrets.SF_USERNAME_QA }} \
             --alias qa \
             --instance-url https://test.salesforce.com
 
-      # 🚀 Validação dinâmica
-      - name: Validate Deployment (Delta)
+      - name: Extract Apex Tests from PR
+        id: tests
         run: |
-          if [ "${{ steps.extract_tests.outputs.testlevel }}" == "RunSpecifiedTests" ]; then
+          BODY="${{ github.event.pull_request.body }}"
+          TESTS=$(echo "$BODY" | grep -oP '(?<=Apex::\[).*?(?=\]::Apex)')
+          echo "tests=$TESTS" >> $GITHUB_OUTPUT
+
+      - name: Validate Deployment in QA
+        run: |
+          if [ "${{ steps.tests.outputs.tests }}" = "all" ]; then
             sf project deploy validate \
               --source-dir delta \
               --target-org qa \
-              --test-level RunSpecifiedTests \
-              --tests "${{ steps.extract_tests.outputs.tests }}" \
-              --wait 30
+              --test-level RunAllTestsInOrg
           else
             sf project deploy validate \
               --source-dir delta \
               --target-org qa \
-              --test-level RunLocalTests \
-              --wait 30
+              --test-level RunSpecifiedTests \
+              --tests "${{ steps.tests.outputs.tests }}"
           fi
