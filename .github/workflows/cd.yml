@@ -1,0 +1,181 @@
+name: Deploy Delta to QA
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - 'force-app/**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ---------------------------------
+      # Checkout repository
+      # ---------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ---------------------------------
+      # Install system dependencies
+      # ---------------------------------
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq bc
+
+      # ---------------------------------
+      # Setup Node
+      # ---------------------------------
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # ---------------------------------
+      # Install Salesforce CLI
+      # ---------------------------------
+      - name: Install Salesforce CLI
+        run: |
+          npm install -g @salesforce/cli
+          sf version
+
+      # ---------------------------------
+      # Install sfdx-git-delta plugin
+      # ---------------------------------
+      - name: Install sfdx-git-delta
+        run: |
+          echo y | sf plugins install sfdx-git-delta
+
+      # ---------------------------------
+      # Install Code Analyzer (optional)
+      # ---------------------------------
+      - name: Install Code Analyzer
+        run: |
+          sf plugins install code-analyzer --force
+
+      # ---------------------------------
+      # Run Code Analyzer (optional)
+      # ---------------------------------
+      - name: Run Code Analyzer
+        run: |
+          sf code-analyzer run \
+            --workspace force-app \
+            --severity-threshold 3
+
+      # ---------------------------------
+      # Generate Delta
+      # ---------------------------------
+      - name: Generate Delta
+        run: |
+          mkdir -p delta
+          # Delta entre HEAD e commit anterior
+          sf sgd source delta \
+            --to HEAD \
+            --from HEAD~1 \
+            --output-dir delta \
+            --generate-delta
+
+      # ---------------------------------
+      # Check if delta is empty
+      # ---------------------------------
+      - name: Check Delta
+        id: check_delta
+        run: |
+          if [ -z "$(ls -A delta)" ]; then
+            echo "No changes to deploy. Skipping."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Delta found"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      # ---------------------------------
+      # Create JWT Key
+      # ---------------------------------
+      - name: Create JWT Key
+        if: steps.check_delta.outputs.skip == 'false'
+        run: echo "${{ secrets.SF_JWT_KEY }}" > server.key
+
+      # ---------------------------------
+      # Authenticate QA Sandbox
+      # ---------------------------------
+      - name: Authenticate QA
+        if: steps.check_delta.outputs.skip == 'false'
+        run: |
+          sf org login jwt \
+            --client-id ${{ secrets.SF_CLIENT_ID }} \
+            --jwt-key-file server.key \
+            --username ${{ secrets.SF_USERNAME_QA }} \
+            --alias qa \
+            --instance-url https://test.salesforce.com
+
+      # ---------------------------------
+      # Determine tests to run from commit message
+      # ---------------------------------
+      - name: Set Tests to Run
+        if: steps.check_delta.outputs.skip == 'false'
+        id: tests
+        run: |
+          BODY="${{ github.event.head_commit.message }}"
+          TESTS="none" # padrão: nenhum teste
+
+          # Extrai padrão Apex::[...]::Apex
+          MATCH=$(echo "$BODY" | sed -n 's/.*Apex::\[\(.*\)\]::Apex.*/\1/p')
+          if [ ! -z "$MATCH" ]; then
+            TRIMMED=$(echo "$MATCH" | tr -d '[:space:]')
+            if [ "$TRIMMED" = "all" ]; then
+              TESTS="all"
+            elif [ "$TRIMMED" = "none" ]; then
+              TESTS="none"
+            else
+              TESTS="$MATCH"
+            fi
+          fi
+
+          echo "tests=$TESTS" >> $GITHUB_OUTPUT
+
+      # ---------------------------------
+      # Deploy Delta to QA
+      # ---------------------------------
+      - name: Deploy Delta to QA
+        if: steps.check_delta.outputs.skip == 'false'
+        run: |
+          TESTS="${{ steps.tests.outputs.tests }}"
+
+          if [ "$TESTS" = "none" ]; then
+            echo "No tests specified. Running relevant tests only."
+            sf project deploy start \
+              --source-dir delta \
+              --target-org qa \
+              --test-level RunRelevantTests \
+              --wait 30
+
+          elif [ "$TESTS" = "all" ]; then
+            echo "Running all tests..."
+            sf project deploy start \
+              --source-dir delta \
+              --target-org qa \
+              --test-level RunAllTestsInOrg \
+              --wait 30
+
+          else
+            echo "Running specified tests: $TESTS"
+            sf project deploy start \
+              --source-dir delta \
+              --target-org qa \
+              --test-level RunSpecifiedTests \
+              --tests "$TESTS" \
+              --wait 30
+          fi
+
+      # ---------------------------------
+      # Success
+      # ---------------------------------
+      - name: Success
+        if: success()
+        run: echo "Deployment to QA completed successfully."
