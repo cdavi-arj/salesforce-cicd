@@ -1,7 +1,7 @@
 name: Deploy to QA
 
 on:
-  push:
+  pull_request:
     branches:
       - develop
 
@@ -10,39 +10,68 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # ---------------------------------
+      # Checkout repository
+      # ---------------------------------
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Install Salesforce CLI (sf)
+      # ---------------------------------
+      # Install Salesforce CLI
+      # ---------------------------------
+      - name: Install Salesforce CLI
         run: |
-          npm install --global @salesforce/cli@latest
+          npm install -g @salesforce/cli@latest
           sf version
 
-      - name: Install SFDX CLI (legacy)
-        run: |
-          npm install --global sfdx-cli
-          sfdx version
-
+      # ---------------------------------
+      # Install sfdx-git-delta
+      # ---------------------------------
       - name: Install sfdx-git-delta
         run: |
-          echo y | sfdx plugins:install sfdx-git-delta
-          sfdx plugins
+          echo y | sf plugins install sfdx-git-delta
+          sf plugins
 
-      # Gerar delta entre último commit
+      # ---------------------------------
+      # Generate Delta
+      # ---------------------------------
       - name: Generate Delta
         run: |
-          sfdx sgd:source:delta \
+          mkdir -p delta
+          BASE_BRANCH=${{ github.event.pull_request.base.ref }}
+          sf sgd source delta \
             --to HEAD \
-            --from HEAD~1 \
-            --output delta \
+            --from origin/$BASE_BRANCH \
+            --output-dir delta \
             --generate-delta
 
+      # ---------------------------------
+      # Check if delta is empty
+      # ---------------------------------
+      - name: Check Delta
+        id: check_delta
+        run: |
+          if [ -z "$(ls -A delta)" ]; then
+            echo "No delta found"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Delta found"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      # ---------------------------------
+      # Create JWT Key
+      # ---------------------------------
       - name: Create JWT Key
         run: echo "${{ secrets.SF_JWT_KEY }}" > server.key
 
-      - name: Authenticate QA Sandbox
+      # ---------------------------------
+      # Authenticate QA Sandbox
+      # ---------------------------------
+      - name: Authenticate QA
+        if: steps.check_delta.outputs.skip == 'false'
         run: |
           sf org login jwt \
             --client-id ${{ secrets.SF_CLIENT_ID }} \
@@ -51,10 +80,69 @@ jobs:
             --alias qa \
             --instance-url https://test.salesforce.com
 
-      - name: Deploy Delta to QA
+      # ---------------------------------
+      # Extract Apex Tests from PR Body
+      # ---------------------------------
+      - name: Extract Apex Tests
+        if: steps.check_delta.outputs.skip == 'false'
+        id: tests
         run: |
-          sf project deploy start \
-            --source-dir delta \
-            --target-org qa \
-            --test-level RunLocalTests \
-            --wait 30
+          BODY="${{ github.event.pull_request.body }}"
+
+          TESTS="none"
+
+          # Procura padrão Apex::[...]::Apex
+          MATCH=$(echo "$BODY" | sed -n 's/.*Apex::\[\(.*\)\]::Apex.*/\1/p')
+
+          if [ ! -z "$MATCH" ]; then
+            TRIMMED=$(echo "$MATCH" | tr -d '[:space:]')
+            if [ "$TRIMMED" = "all" ]; then
+              TESTS="all"
+            elif [ "$TRIMMED" = "none" ]; then
+              TESTS="none"
+            else
+              TESTS="$MATCH"
+            fi
+          fi
+
+          echo "tests=$TESTS" >> $GITHUB_OUTPUT
+
+      # ---------------------------------
+      # Deploy Delta to QA
+      # ---------------------------------
+      - name: Deploy Delta to QA
+        if: steps.check_delta.outputs.skip == 'false'
+        run: |
+          TESTS="${{ steps.tests.outputs.tests }}"
+
+          if [ "$TESTS" = "none" ]; then
+            echo "No specific tests found. Running relevant tests only."
+            sf project deploy start \
+              --source-dir delta \
+              --target-org qa \
+              --test-level RunRelevantTests \
+              --wait 30
+
+          elif [ "$TESTS" = "all" ]; then
+            echo "Running all tests..."
+            sf project deploy start \
+              --source-dir delta \
+              --target-org qa \
+              --test-level RunAllTestsInOrg \
+              --wait 30
+
+          else
+            echo "Running specified tests: $TESTS"
+            sf project deploy start \
+              --source-dir delta \
+              --target-org qa \
+              --test-level RunSpecifiedTests \
+              --tests "$TESTS" \
+              --wait 30
+
+      # ---------------------------------
+      # Success
+      # ---------------------------------
+      - name: Success
+        if: success()
+        run: echo "Deployment validation completed successfully."
