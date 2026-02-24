@@ -51,7 +51,7 @@ jobs:
           sf plugins install code-analyzer --force
 
       # ---------------------------------
-      # Code Quality Scan
+      # Run Code Analyzer
       # ---------------------------------
       - name: Run Code Analyzer
         run: |
@@ -104,7 +104,7 @@ jobs:
             --instance-url https://test.salesforce.com
 
       # ---------------------------------
-      # Extract Apex tests from PR Body
+      # Extract Apex Tests from PR Body
       # ---------------------------------
       - name: Extract Apex Tests
         if: steps.check_delta.outputs.skip == 'false'
@@ -138,11 +138,11 @@ jobs:
           TESTS="${{ steps.tests.outputs.tests }}"
 
           if [ "$TESTS" = "none" ]; then
-            echo "No tests will be run"
+            echo "No tests specified. Running relevant tests only."
             sf project deploy validate \
               --source-dir delta \
               --target-org qa \
-              --test-level NoTestRun \
+              --test-level RunRelevantTests \
               --coverage-formatters json \
               --results-dir coverage
 
