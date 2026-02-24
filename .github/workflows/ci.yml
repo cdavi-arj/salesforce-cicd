@@ -35,6 +35,13 @@ jobs:
           node-version: 20
 
       # ---------------------------------
+      # Install Node.js dependencies (including sfdx-git-delta)
+      # ---------------------------------
+      - name: Install Node Dependencies
+        run: |
+          npm ci
+
+      # ---------------------------------
       # Install Salesforce CLI
       # ---------------------------------
       - name: Install Salesforce CLI
@@ -60,7 +67,7 @@ jobs:
             --severity-threshold 3
 
       # ---------------------------------
-      # Generate Delta using npx (local execution)
+      # Generate Delta using npx
       # ---------------------------------
       - name: Generate Delta
         run: |
