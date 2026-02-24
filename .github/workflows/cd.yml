@@ -10,66 +10,49 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ---------------------------------
-      # Checkout repository
-      # ---------------------------------
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # ---------------------------------
-      # Install Salesforce CLI
-      # ---------------------------------
       - name: Install Salesforce CLI
         run: |
           npm install -g @salesforce/cli@latest
           sf version
 
-      # ---------------------------------
-      # Install sfdx-git-delta
-      # ---------------------------------
       - name: Install sfdx-git-delta
         run: |
           echo y | sf plugins install sfdx-git-delta
           sf plugins
 
-      # ---------------------------------
-      # Generate Delta
-      # ---------------------------------
+      # Generate delta between last two commits
       - name: Generate Delta
         run: |
           mkdir -p delta
-          # compara com o commit anterior na develop
           sf sgd source delta \
             --to HEAD \
             --from HEAD~1 \
             --output-dir delta \
             --generate-delta
 
-      # ---------------------------------
-      # Check if delta is empty
-      # ---------------------------------
+      # Skip deploy if delta is empty
       - name: Check Delta
         id: check_delta
         run: |
           if [ -z "$(ls -A delta)" ]; then
-            echo "No delta found"
+            echo "No changes to deploy. Skipping."
             echo "skip=true" >> $GITHUB_OUTPUT
           else
             echo "Delta found"
             echo "skip=false" >> $GITHUB_OUTPUT
 
-      # ---------------------------------
       # Create JWT Key
-      # ---------------------------------
       - name: Create JWT Key
         run: echo "${{ secrets.SF_JWT_KEY }}" > server.key
 
-      # ---------------------------------
       # Authenticate QA Sandbox
-      # ---------------------------------
       - name: Authenticate QA
+        if: steps.check_delta.outputs.skip == 'false'
         run: |
           sf org login jwt \
             --client-id ${{ secrets.SF_CLIENT_ID }} \
@@ -78,16 +61,12 @@ jobs:
             --alias qa \
             --instance-url https://test.salesforce.com
 
-      # ---------------------------------
-      # Determine tests to run
-      # ---------------------------------
+      # Determine tests to run from merge commit message (if any)
       - name: Set Tests to Run
+        if: steps.check_delta.outputs.skip == 'false'
         id: tests
         run: |
-          # padrão: nenhum teste específico
           TESTS="none"
-
-          # Se estiver disponível, tenta extrair da descrição da PR (merge commit)
           if [ ! -z "${{ github.event.head_commit.message }}" ]; then
             BODY="${{ github.event.head_commit.message }}"
             MATCH=$(echo "$BODY" | sed -n 's/.*Apex::\[\(.*\)\]::Apex.*/\1/p')
@@ -102,19 +81,16 @@ jobs:
               fi
             fi
           fi
-
           echo "tests=$TESTS" >> $GITHUB_OUTPUT
 
-      # ---------------------------------
-      # Deploy Delta to QA
-      # ---------------------------------
+      # Deploy delta
       - name: Deploy Delta to QA
         if: steps.check_delta.outputs.skip == 'false'
         run: |
           TESTS="${{ steps.tests.outputs.tests }}"
 
           if [ "$TESTS" = "none" ]; then
-            echo "No specific tests found. Running relevant tests only."
+            echo "No tests specified. Running relevant tests only."
             sf project deploy start \
               --source-dir delta \
               --target-org qa \
@@ -138,9 +114,6 @@ jobs:
               --tests "$TESTS" \
               --wait 30
 
-      # ---------------------------------
-      # Success
-      # ---------------------------------
       - name: Success
         if: success()
         run: echo "Deployment to QA completed successfully."
