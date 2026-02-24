@@ -1,4 +1,4 @@
-name: Validate and Deploy to QA
+name: Validate Deployment to QA
 
 on:
   pull_request:
@@ -15,25 +15,53 @@ jobs:
         with:
           fetch-depth: 0
 
+      # -----------------------------
+      # Install Salesforce CLI
+      # -----------------------------
       - name: Install Salesforce CLI
         run: |
           npm install --global @salesforce/cli
           sf version
 
+      # -----------------------------
+      # Install sfdx-git-delta plugin
+      # -----------------------------
       - name: Install sfdx-git-delta plugin
         run: |
           echo y | sf plugins install sfdx-git-delta
           sf plugins
 
+      # -----------------------------
+      # Generate Delta
+      # -----------------------------
       - name: Generate Delta
         run: |
+          mkdir -p delta
           sf sgd source delta \
             --to "HEAD" \
             --from "origin/develop" \
             --output-dir delta \
             --generate-delta
 
-      - name: Authenticate to QA (Sandbox)
+      # -----------------------------
+      # Check if delta has changes
+      # -----------------------------
+      - name: Check if Delta is Empty
+        id: check_delta
+        run: |
+          if [ -z "$(ls -A delta)" ]; then
+            echo "No changes detected."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Changes detected."
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      # -----------------------------
+      # Authenticate to QA (Sandbox)
+      # -----------------------------
+      - name: Authenticate to QA
+        if: steps.check_delta.outputs.skip == 'false'
         run: |
           echo "${{ secrets.SF_JWT_KEY_QA }}" > server.key
           sf org login jwt \
@@ -43,14 +71,25 @@ jobs:
             --alias qa \
             --instance-url https://test.salesforce.com
 
-      - name: Extract Apex Tests from PR
+      # -----------------------------
+      # Extract Apex Tests from PR
+      # -----------------------------
+      - name: Extract Apex Tests
+        if: steps.check_delta.outputs.skip == 'false'
         id: tests
         run: |
           BODY="${{ github.event.pull_request.body }}"
           TESTS=$(echo "$BODY" | grep -oP '(?<=Apex::\[).*?(?=\]::Apex)')
+          if [ -z "$TESTS" ]; then
+            TESTS="all"
+          fi
           echo "tests=$TESTS" >> $GITHUB_OUTPUT
 
+      # -----------------------------
+      # Validate Deployment
+      # -----------------------------
       - name: Validate Deployment in QA
+        if: steps.check_delta.outputs.skip == 'false'
         run: |
           if [ "${{ steps.tests.outputs.tests }}" = "all" ]; then
             sf project deploy validate \
