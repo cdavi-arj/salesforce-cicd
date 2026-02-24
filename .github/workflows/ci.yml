@@ -11,7 +11,7 @@ jobs:
 
     steps:
       # ---------------------------------
-      # Checkout repository
+      # Checkout
       # ---------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -19,7 +19,7 @@ jobs:
           fetch-depth: 0
 
       # ---------------------------------
-      # Install Salesforce CLI (modern)
+      # Install Salesforce CLI
       # ---------------------------------
       - name: Install Salesforce CLI
         run: |
@@ -27,12 +27,23 @@ jobs:
           sf version
 
       # ---------------------------------
-      # Install sfdx-git-delta plugin
+      # Install Plugins
       # ---------------------------------
-      - name: Install sfdx-git-delta plugin
+      - name: Install Plugins
         run: |
           echo y | sf plugins install sfdx-git-delta
+          echo y | sf plugins install @salesforce/sfdx-scanner
           sf plugins
+
+      # ---------------------------------
+      # Run Code Quality Scan
+      # ---------------------------------
+      - name: Run Code Quality Scan
+        run: |
+          sf scanner run \
+            --target "force-app" \
+            --format table \
+            --severity-threshold 3
 
       # ---------------------------------
       # Generate Delta
@@ -56,12 +67,11 @@ jobs:
             echo "No changes detected. Skipping deployment."
             echo "skip=true" >> $GITHUB_OUTPUT
           else
-            echo "Changes detected."
             echo "skip=false" >> $GITHUB_OUTPUT
           fi
 
       # ---------------------------------
-      # Authenticate to QA (Sandbox)
+      # Authenticate to QA
       # ---------------------------------
       - name: Authenticate to QA
         if: steps.check_delta.outputs.skip == 'false'
@@ -75,40 +85,54 @@ jobs:
             --instance-url https://test.salesforce.com
 
       # ---------------------------------
-      # Extract Apex Tests from PR Body
-      # Pattern expected:
-      # Apex::[Class1,Class2]::Apex
+      # Extract Apex Tests from PR
       # ---------------------------------
       - name: Extract Apex Tests
         if: steps.check_delta.outputs.skip == 'false'
         id: tests
         run: |
           BODY="${{ github.event.pull_request.body }}"
-
           TESTS=$(echo "$BODY" | sed -n 's/.*Apex::\[\(.*\)\]::Apex.*/\1/p')
 
           if [ -z "$TESTS" ]; then
-            echo "No test pattern found. Running all tests."
             TESTS="all"
           fi
 
           echo "tests=$TESTS" >> $GITHUB_OUTPUT
 
       # ---------------------------------
-      # Validate Deployment
+      # Validate Deployment with Coverage
       # ---------------------------------
-      - name: Validate Deployment in QA
+      - name: Validate Deployment
         if: steps.check_delta.outputs.skip == 'false'
         run: |
           if [ "${{ steps.tests.outputs.tests }}" = "all" ]; then
             sf project deploy validate \
               --source-dir delta \
               --target-org qa \
-              --test-level RunAllTestsInOrg
+              --test-level RunAllTestsInOrg \
+              --coverage-formatters json \
+              --results-dir coverage
           else
             sf project deploy validate \
               --source-dir delta \
               --target-org qa \
               --test-level RunSpecifiedTests \
-              --tests "${{ steps.tests.outputs.tests }}"
+              --tests "${{ steps.tests.outputs.tests }}" \
+              --coverage-formatters json \
+              --results-dir coverage
+          fi
+
+      # ---------------------------------
+      # Enforce Minimum Coverage 85%
+      # ---------------------------------
+      - name: Enforce Coverage >= 85%
+        if: steps.check_delta.outputs.skip == 'false'
+        run: |
+          COVERAGE=$(jq '.result.summary.testRunCoverage' coverage/test-result-codecoverage.json)
+          echo "Org Coverage: $COVERAGE%"
+
+          if (( $(echo "$COVERAGE < 85" | bc -l) )); then
+            echo "Coverage is below 85%. Failing pipeline."
+            exit 1
           fi
