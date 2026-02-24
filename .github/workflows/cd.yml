@@ -13,33 +13,46 @@ jobs:
     if: ${{ github.actor != 'dependabot[bot]' }}
 
     steps:
+      # ---------------------------------
+      # Checkout repository
+      # ---------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq bc
-
+      # ---------------------------------
+      # Setup Node
+      # ---------------------------------
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
+      # ---------------------------------
+      # Install Salesforce CLI
+      # ---------------------------------
       - name: Install Salesforce CLI
         run: |
           npm install -g @salesforce/cli
           sf version
 
+      # ---------------------------------
+      # Install sfdx-git-delta
+      # ---------------------------------
       - name: Install sfdx-git-delta
         run: |
           echo y | sf plugins install sfdx-git-delta
 
+      # ---------------------------------
+      # Create JWT Key
+      # ---------------------------------
       - name: Create JWT Key
         run: echo "${{ secrets.SF_JWT_KEY }}" > server.key
 
+      # ---------------------------------
+      # Authenticate QA Sandbox
+      # ---------------------------------
       - name: Authenticate QA
         run: |
           sf org login jwt \
@@ -49,17 +62,22 @@ jobs:
             --alias qa \
             --instance-url https://test.salesforce.com
 
+      # ---------------------------------
+      # Generate Delta (HEAD^ → HEAD)
+      # ---------------------------------
       - name: Generate Delta
         run: |
           mkdir -p delta
-          git fetch origin develop
           sf sgd source delta \
             --to HEAD \
-            --from origin/develop \
+            --from HEAD^ \
             --output-dir delta \
             --generate-delta \
             --source force-app/
 
+      # ---------------------------------
+      # Check if delta is empty
+      # ---------------------------------
       - name: Check Delta
         id: check_delta
         run: |
@@ -70,6 +88,10 @@ jobs:
             echo "Changes detected."
             echo "skip=false" >> $GITHUB_OUTPUT
 
+      # ---------------------------------
+      # Determine tests to run from commit message
+      # Pattern: Apex::[Class1,Class2]::Apex
+      # ---------------------------------
       - name: Set Tests to Run
         if: steps.check_delta.outputs.skip == 'false'
         id: tests
@@ -89,6 +111,9 @@ jobs:
           fi
           echo "tests=$TESTS" >> $GITHUB_OUTPUT
 
+      # ---------------------------------
+      # Deploy Delta
+      # ---------------------------------
       - name: Deploy Delta
         if: steps.check_delta.outputs.skip == 'false'
         run: |
@@ -101,8 +126,7 @@ jobs:
               --target-org qa \
               --test-level RunRelevantTests \
               --wait 30 \
-              --ignore-warnings \
-              --ignore-conflicts
+              --ignore-warnings
 
           elif [ "$TESTS" = "all" ]; then
             echo "Running all tests..."
@@ -111,8 +135,7 @@ jobs:
               --target-org qa \
               --test-level RunAllTestsInOrg \
               --wait 30 \
-              --ignore-warnings \
-              --ignore-conflicts
+              --ignore-warnings
 
           else
             echo "Running specified tests: $TESTS"
@@ -122,24 +145,11 @@ jobs:
               --test-level RunSpecifiedTests \
               --tests "$TESTS" \
               --wait 30 \
-              --ignore-warnings \
-              --ignore-conflicts
+              --ignore-warnings
 
-      - name: Deploy Destructive Changes
-        if: steps.check_delta.outputs.skip == 'false'
-        run: |
-          if [ -d "delta/destructiveChanges" ] && [ "$(ls -A delta/destructiveChanges)" ]; then
-            echo "Deploying destructive changes..."
-            sf project deploy start \
-              --source-dir delta/destructiveChanges \
-              --target-org qa \
-              --test-level RunRelevantTests \
-              --wait 30 \
-              --ignore-warnings \
-              --ignore-conflicts
-          else
-            echo "No destructive changes found."
-
+      # ---------------------------------
+      # Success
+      # ---------------------------------
       - name: Success
         if: success()
         run: echo "Deployment completed successfully."
