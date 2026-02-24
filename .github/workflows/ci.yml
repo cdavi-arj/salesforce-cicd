@@ -19,23 +19,7 @@ jobs:
           fetch-depth: 0
 
       # ---------------------------------
-      # Install system dependencies
-      # ---------------------------------
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq bc
-
-      # ---------------------------------
-      # Setup Node.js
-      # ---------------------------------
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: 20
-
-      # ---------------------------------
-      # Install Salesforce CLI
+      # Install Salesforce CLI (modern)
       # ---------------------------------
       - name: Install Salesforce CLI
         run: |
@@ -43,14 +27,15 @@ jobs:
           sf version
 
       # ---------------------------------
-      # Install sfdx-git-delta locally (dev dependency)
+      # Install sfdx-git-delta plugin
       # ---------------------------------
-      - name: Install sfdx-git-delta
+      - name: Install sfdx-git-delta plugin
         run: |
-          npm install --save-dev sfdx-git-delta
+          echo y | sf plugins install sfdx-git-delta
+          sf plugins
 
       # ---------------------------------
-      # Install Code Analyzer Plugin
+      # Install Code Analyzer plugin
       # ---------------------------------
       - name: Install Code Analyzer
         run: |
@@ -67,14 +52,14 @@ jobs:
             --severity-threshold 3
 
       # ---------------------------------
-      # Generate Delta using npx
+      # Generate Delta
       # ---------------------------------
       - name: Generate Delta
         run: |
           mkdir -p delta
           BASE_BRANCH=${{ github.event.pull_request.base.ref }}
           git fetch origin $BASE_BRANCH
-          npx sfdx-git-delta source delta \
+          sf sgd source delta \
             --to HEAD \
             --from origin/$BASE_BRANCH \
             --output-dir delta \
@@ -90,6 +75,7 @@ jobs:
             echo "No changes detected. Skipping deployment."
             echo "skip=true" >> $GITHUB_OUTPUT
           else
+            echo "Changes detected."
             echo "skip=false" >> $GITHUB_OUTPUT
           fi
 
@@ -116,17 +102,16 @@ jobs:
         run: |
           BODY="${{ github.event.pull_request.body }}"
           TESTS=$(echo "$BODY" | sed -n 's/.*Apex::\[\(.*\)\]::Apex.*/\1/p')
-
           if [ -z "$TESTS" ]; then
+            echo "No test pattern found. Running all tests."
             TESTS="all"
           fi
-
           echo "tests=$TESTS" >> $GITHUB_OUTPUT
 
       # ---------------------------------
       # Validate Deployment
       # ---------------------------------
-      - name: Validate Deployment
+      - name: Validate Deployment in QA
         if: steps.check_delta.outputs.skip == 'false'
         run: |
           if [ "${{ steps.tests.outputs.tests }}" = "all" ]; then
@@ -153,7 +138,6 @@ jobs:
         run: |
           COVERAGE=$(jq '.result.summary.testRunCoverage' coverage/test-result-codecoverage.json)
           echo "Org Coverage: $COVERAGE%"
-
           if (( $(echo "$COVERAGE < 85" | bc -l) )); then
             echo "Coverage is below 85%. Failing pipeline."
             exit 1
