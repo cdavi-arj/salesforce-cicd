@@ -1,48 +1,63 @@
-name: Deploy to QA
+name: Deploy Delta to QA
 
 on:
   push:
     branches:
       - develop
+    paths:
+      - 'force-app/**'
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    if: ${{ github.actor != 'dependabot[bot]' }}
 
     steps:
+      # ---------------------------------
       # Checkout repository
+      # ---------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # System dependencies
+      # ---------------------------------
+      # Install dependencies
+      # ---------------------------------
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y jq bc
 
-      # Node setup
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      # Salesforce CLI
+      # ---------------------------------
+      # Install Salesforce CLI
+      # ---------------------------------
       - name: Install Salesforce CLI
         run: |
           npm install -g @salesforce/cli
           sf version
 
-      # Plugins
+      # ---------------------------------
+      # Install sfdx-git-delta plugin
+      # ---------------------------------
       - name: Install sfdx-git-delta
-        run: echo y | sf plugins install sfdx-git-delta
+        run: |
+          echo y | sf plugins install sfdx-git-delta
 
+      # ---------------------------------
       # Create JWT Key
+      # ---------------------------------
       - name: Create JWT Key
         run: echo "${{ secrets.SF_JWT_KEY }}" > server.key
 
+      # ---------------------------------
       # Authenticate QA Sandbox
+      # ---------------------------------
       - name: Authenticate QA
         run: |
           sf org login jwt \
@@ -52,8 +67,37 @@ jobs:
             --alias qa \
             --instance-url https://test.salesforce.com
 
-      # Determine tests from commit message
+      # ---------------------------------
+      # Generate Delta
+      # ---------------------------------
+      - name: Generate Delta
+        run: |
+          mkdir -p delta
+          sf sgd source delta \
+            --to HEAD \
+            --from HEAD~1 \
+            --output-dir delta \
+            --generate-delta \
+            --source force-app/
+
+      # ---------------------------------
+      # Check if delta is empty
+      # ---------------------------------
+      - name: Check Delta
+        id: check_delta
+        run: |
+          if [ -z "$(ls -A delta)" ]; then
+            echo "No changes detected. Skipping deploy."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Changes detected."
+            echo "skip=false" >> $GITHUB_OUTPUT
+
+      # ---------------------------------
+      # Determine tests to run from commit message
+      # ---------------------------------
       - name: Set Tests to Run
+        if: steps.check_delta.outputs.skip == 'false'
         id: tests
         run: |
           TESTS="none"
@@ -71,39 +115,66 @@ jobs:
           fi
           echo "tests=$TESTS" >> $GITHUB_OUTPUT
 
-      # Deploy
-      - name: Deploy to QA
+      # ---------------------------------
+      # Deploy Delta to QA
+      # ---------------------------------
+      - name: Deploy Delta
+        if: steps.check_delta.outputs.skip == 'false'
         run: |
           TESTS="${{ steps.tests.outputs.tests }}"
-          DIR="force-app"
-          echo "Deploying source from $DIR"
 
           if [ "$TESTS" = "none" ]; then
             echo "No tests specified. Running relevant tests only."
             sf project deploy start \
-              --source-dir $DIR \
+              --source-dir delta \
               --target-org qa \
               --test-level RunRelevantTests \
-              --wait 30
+              --wait 30 \
+              --ignore-warnings \
+              --ignore-conflicts
 
           elif [ "$TESTS" = "all" ]; then
             echo "Running all tests..."
             sf project deploy start \
-              --source-dir $DIR \
+              --source-dir delta \
               --target-org qa \
               --test-level RunAllTestsInOrg \
-              --wait 30
+              --wait 30 \
+              --ignore-warnings \
+              --ignore-conflicts
 
           else
             echo "Running specified tests: $TESTS"
             sf project deploy start \
-              --source-dir $DIR \
+              --source-dir delta \
               --target-org qa \
               --test-level RunSpecifiedTests \
               --tests "$TESTS" \
-              --wait 30
+              --wait 30 \
+              --ignore-warnings \
+              --ignore-conflicts
 
+      # ---------------------------------
+      # Deploy destructive changes if any
+      # ---------------------------------
+      - name: Deploy Destructive Changes
+        if: steps.check_delta.outputs.skip == 'false'
+        run: |
+          if [ -d "delta/destructiveChanges" ] && [ "$(ls -A delta/destructiveChanges)" ]; then
+            echo "Deploying destructive changes..."
+            sf project deploy start \
+              --source-dir delta/destructiveChanges \
+              --target-org qa \
+              --test-level RunRelevantTests \
+              --wait 30 \
+              --ignore-warnings \
+              --ignore-conflicts
+          else
+            echo "No destructive changes found."
+
+      # ---------------------------------
       # Success
+      # ---------------------------------
       - name: Success
         if: success()
-        run: echo "Deployment to QA completed successfully."
+        run: echo "Deployment completed successfully."
