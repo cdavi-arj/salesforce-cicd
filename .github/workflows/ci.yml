@@ -1,4 +1,4 @@
-name: Salesforce CI - Validate on QA
+name: PR Validation - QA
 
 on:
   pull_request:
@@ -10,21 +10,56 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # 2️⃣ Install Salesforce CLI
       - name: Install Salesforce CLI
         run: npm install --global @salesforce/cli
 
-      # 3️⃣ Create JWT key file
-      - name: Create server.key file
-        run: |
-          echo "${{ secrets.SF_JWT_KEY }}" > server.key
+      - name: Install sfdx-git-delta
+        run: sf plugins install sfdx-git-delta
 
-      # 4️⃣ Authenticate to Sandbox QA
-      - name: Authenticate to QA Sandbox
+      - name: Install SFDX Scanner
+        run: sf plugins install @salesforce/sfdx-scanner
+
+      # 🔹 Gerar Delta
+      - name: Generate Delta
+        run: |
+          sf sgd source delta \
+            --to HEAD \
+            --from origin/develop \
+            --output-dir delta \
+            --generate-delta
+
+      # 🔥 Extrair testes da PR
+      - name: Extract Apex Tests From PR
+        id: extract_tests
+        run: |
+          PR_BODY="${{ github.event.pull_request.body }}"
+
+          echo "PR Body:"
+          echo "$PR_BODY"
+
+          if [[ "$PR_BODY" =~ Apex::\[(.*)\]::Apex ]]; then
+            TESTS="${BASH_REMATCH[1]}"
+
+            if [[ "$TESTS" == "all" ]]; then
+              echo "testlevel=RunLocalTests" >> $GITHUB_OUTPUT
+            else
+              echo "testlevel=RunSpecifiedTests" >> $GITHUB_OUTPUT
+              echo "tests=$TESTS" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "No Apex pattern found. Using RunLocalTests."
+            echo "testlevel=RunLocalTests" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create JWT Key
+        run: echo "${{ secrets.SF_JWT_KEY }}" > server.key
+
+      - name: Authenticate QA Sandbox
         run: |
           sf org login jwt \
             --client-id ${{ secrets.SF_CLIENT_ID }} \
@@ -33,11 +68,26 @@ jobs:
             --alias qa \
             --instance-url https://test.salesforce.com
 
-      # 5️⃣ Validate Deployment
-      - name: Validate Deployment
+      # 🚀 Validação dinâmica
+      - name: Validate Deployment (Delta)
         run: |
-          sf project deploy validate \
-            --source-dir force-app \
-            --target-org qa \
-            --test-level RunLocalTests \
-            --wait 30
+          if [ "${{ steps.extract_tests.outputs.testlevel }}" == "RunSpecifiedTests" ]; then
+            sf project deploy validate \
+              --source-dir delta \
+              --target-org qa \
+              --test-level RunSpecifiedTests \
+              --tests "${{ steps.extract_tests.outputs.tests }}" \
+              --wait 30
+          else
+            sf project deploy validate \
+              --source-dir delta \
+              --target-org qa \
+              --test-level RunLocalTests \
+              --wait 30
+          fi
+
+      - name: Run Static Code Analysis
+        run: |
+          sf scanner run \
+            --target delta \
+            --format table
