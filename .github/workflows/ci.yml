@@ -19,18 +19,15 @@ jobs:
           fetch-depth: 0
 
       # ---------------------------------
-      # Install system dependencies
+      # Install dependencies
       # ---------------------------------
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y jq bc
 
-      # ---------------------------------
-      # Setup Node.js
-      # ---------------------------------
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: 20
 
@@ -39,29 +36,24 @@ jobs:
       # ---------------------------------
       - name: Install Salesforce CLI
         run: |
-          npm install --global @salesforce/cli
+          npm install -g @salesforce/cli
           sf version
 
       # ---------------------------------
-      # Install sfdx-git-delta plugin
+      # Install Plugins
       # ---------------------------------
-      - name: Install sfdx-git-delta plugin
+      - name: Install sfdx-git-delta
         run: |
           echo y | sf plugins install sfdx-git-delta
-          sf plugins
 
-      # ---------------------------------
-      # Install Code Analyzer plugin
-      # ---------------------------------
       - name: Install Code Analyzer
         run: |
           sf plugins install code-analyzer --force
 
       # ---------------------------------
-      # Run Code Quality Scan
-      # Blocks severity >= 3
+      # Code Quality Scan
       # ---------------------------------
-      - name: Run Code Quality Scan
+      - name: Run Code Analyzer
         run: |
           sf code-analyzer run \
             --workspace force-app \
@@ -75,6 +67,7 @@ jobs:
           mkdir -p delta
           BASE_BRANCH=${{ github.event.pull_request.base.ref }}
           git fetch origin $BASE_BRANCH
+
           sf sgd source delta \
             --to HEAD \
             --from origin/$BASE_BRANCH \
@@ -82,26 +75,27 @@ jobs:
             --generate-delta
 
       # ---------------------------------
-      # Check if Delta is Empty
+      # Check if delta is empty
       # ---------------------------------
-      - name: Check if Delta is Empty
+      - name: Check Delta
         id: check_delta
         run: |
           if [ -z "$(ls -A delta)" ]; then
-            echo "No changes detected. Skipping deployment."
+            echo "No delta found"
             echo "skip=true" >> $GITHUB_OUTPUT
           else
-            echo "Changes detected."
+            echo "Delta found"
             echo "skip=false" >> $GITHUB_OUTPUT
           fi
 
       # ---------------------------------
-      # Authenticate to QA (Sandbox)
+      # Authenticate in QA
       # ---------------------------------
-      - name: Authenticate to QA
+      - name: Authenticate QA
         if: steps.check_delta.outputs.skip == 'false'
         run: |
           echo "${{ secrets.SF_JWT_KEY }}" > server.key
+
           sf org login jwt \
             --client-id ${{ secrets.SF_CLIENT_ID }} \
             --jwt-key-file server.key \
@@ -110,41 +104,50 @@ jobs:
             --instance-url https://test.salesforce.com
 
       # ---------------------------------
-      # Extract Apex Tests from PR Body via Node.js
+      # Extract Apex tests from PR description
+      # Pattern expected:
+      # Apex::[Class1,Class2]::Apex
       # ---------------------------------
       - name: Extract Apex Tests
         if: steps.check_delta.outputs.skip == 'false'
         id: tests
         run: |
-          # Salva corpo da PR em variável de ambiente
           echo "${{ github.event.pull_request.body }}" > pr_body.txt
-          
-          # Cria script Node.js inline
+
           cat << 'EOF' > parsePR.js
           const fs = require('fs');
+
           const body = fs.readFileSync('pr_body.txt', 'utf8');
           let tests = 'all';
+
           const match = body.match(/Apex::\[(.*?)\]::Apex/);
+
           if (match && match[1]) {
-            tests = match[1].split(',').map(c => c.trim()).join(',');
+              tests = match[1]
+                  .split(',')
+                  .map(c => c.trim())
+                  .filter(c => c.length > 0)
+                  .join(',');
           }
+
           fs.writeFileSync('testsToRun.txt', tests);
           EOF
 
-          # Executa script
           node parsePR.js
 
-          # Lê resultado
           TESTS=$(cat testsToRun.txt)
           echo "tests=$TESTS" >> $GITHUB_OUTPUT
 
       # ---------------------------------
       # Validate Deployment
       # ---------------------------------
-      - name: Validate Deployment in QA
+      - name: Validate Deployment
         if: steps.check_delta.outputs.skip == 'false'
         run: |
-          if [ "${{ steps.tests.outputs.tests }}" = "all" ]; then
+          TESTS="${{ steps.tests.outputs.tests }}"
+
+          if [ "$TESTS" = "all" ]; then
+            echo "Running all tests..."
             sf project deploy validate \
               --source-dir delta \
               --target-org qa \
@@ -152,24 +155,28 @@ jobs:
               --coverage-formatters json \
               --results-dir coverage
           else
+            echo "Running specified tests: $TESTS"
             sf project deploy validate \
               --source-dir delta \
               --target-org qa \
               --test-level RunSpecifiedTests \
-              --tests "${{ steps.tests.outputs.tests }}" \
+              --tests "$TESTS" \
               --coverage-formatters json \
               --results-dir coverage
+          fi
 
       # ---------------------------------
       # Enforce Coverage >= 85%
       # ---------------------------------
-      - name: Enforce Coverage >= 85%
+      - name: Enforce Coverage
         if: steps.check_delta.outputs.skip == 'false'
         run: |
           COVERAGE=$(jq '.result.summary.testRunCoverage' coverage/test-result-codecoverage.json)
-          echo "Org Coverage: $COVERAGE%"
+
+          echo "Coverage: $COVERAGE%"
+
           if (( $(echo "$COVERAGE < 85" | bc -l) )); then
-            echo "Coverage is below 85%. Failing pipeline."
+            echo "Coverage below 85%. Failing pipeline."
             exit 1
           fi
 
@@ -178,4 +185,4 @@ jobs:
       # ---------------------------------
       - name: Success
         if: success()
-        run: echo "QA Validation completed successfully."
+        run: echo "Validation completed successfully."
