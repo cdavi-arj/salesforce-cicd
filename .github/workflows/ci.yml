@@ -63,7 +63,7 @@ jobs:
 
           git fetch origin $BASE_BRANCH
 
-          sf sgd source delta \
+          sf sfdx-git-delta:source:delta \
             --to "HEAD" \
             --from "origin/$BASE_BRANCH" \
             --output-dir delta \
@@ -83,7 +83,7 @@ jobs:
           fi
 
       # ---------------------------------
-      # Authenticate to QA
+      # Authenticate to QA (Sandbox)
       # ---------------------------------
       - name: Authenticate to QA
         if: steps.check_delta.outputs.skip == 'false'
@@ -138,12 +138,13 @@ jobs:
           fi
 
       # ---------------------------------
-      # Enforce Coverage >= 85%
+      # Enforce Minimum Coverage 85%
       # ---------------------------------
       - name: Enforce Coverage >= 85%
         if: steps.check_delta.outputs.skip == 'false'
         run: |
           COVERAGE=$(jq '.result.summary.testRunCoverage' coverage/test-result-codecoverage.json)
+
           echo "Org Coverage: $COVERAGE%"
 
           if (( $(echo "$COVERAGE < 85" | bc -l) )); then
@@ -151,6 +152,9 @@ jobs:
             exit 1
           fi
 
+      # ---------------------------------
+      # Success
+      # ---------------------------------
       - name: Success
         if: success()
         run: echo "QA Validation completed successfully."
