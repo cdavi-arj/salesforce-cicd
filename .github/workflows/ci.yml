@@ -27,12 +27,28 @@ jobs:
           sudo apt-get install -y jq bc
 
       # ---------------------------------
+      # Setup Node.js
+      # ---------------------------------
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+
+      # ---------------------------------
       # Install Salesforce CLI
       # ---------------------------------
       - name: Install Salesforce CLI
         run: |
           npm install --global @salesforce/cli
           sf version
+
+      # ---------------------------------
+      # Install SFDX-Git-Delta globally
+      # ---------------------------------
+      - name: Install SFDX-Git-Delta
+        run: |
+          npm install -g sfdx-git-delta
+          sgd --version
 
       # ---------------------------------
       # Install Code Analyzer Plugin
@@ -52,7 +68,7 @@ jobs:
             --severity-threshold 3
 
       # ---------------------------------
-      # Generate Delta (STABLE METHOD)
+      # Generate Delta
       # ---------------------------------
       - name: Generate Delta
         run: |
@@ -61,7 +77,7 @@ jobs:
 
           git fetch origin $BASE_BRANCH
 
-          npx sfdx-git-delta source delta \
+          sgd source delta \
             --to HEAD \
             --from origin/$BASE_BRANCH \
             --output-dir delta \
@@ -148,6 +164,9 @@ jobs:
             exit 1
           fi
 
+      # ---------------------------------
+      # Success
+      # ---------------------------------
       - name: Success
         if: success()
         run: echo "QA Validation completed successfully."
