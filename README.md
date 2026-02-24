@@ -1,33 +1,18 @@
-# CI/CD for Org Development Model
+# Salesforce DX Project: Next Steps
 
-This project demonstrates how to use GitHub Actions for CI/CD in an Org Development Model using Salesforce DX (no unlocked packages, no scratch orgs).
+Now that you’ve created a Salesforce DX project, what’s next? Here are some documentation resources to get you started.
 
-We use a QA sandbox as integration environment and GitHub Actions to automate validation, testing, static analysis and deployment.
+## How Do You Plan to Deploy Your Changes?
 
----
+Do you want to deploy a set of changes, or create a self-contained application? Choose a [development model](https://developer.salesforce.com/tools/vscode/en/user-guide/development-models).
 
-## High Level Flow
+## Configure Your Salesforce DX Project
 
-**1-** The `master` branch represents the production metadata.
+The `sfdx-project.json` file contains useful configuration information for your project. See [Salesforce DX Project Configuration](https://developer.salesforce.com/docs/atlas.en-us.sfdx_dev.meta/sfdx_dev/sfdx_dev_ws_config.htm) in the _Salesforce DX Developer Guide_ for details about this file.
 
-**2-** At the beginning of a sprint, we create a `develop` branch from `master`.
+## Read All About It
 
-**3-** Developers clone the repository and authorize the project against their own sandbox (one-time step).
-
-**4-** Developers create feature branches from `develop`.
-
-**5-** Developers push commits to their feature branch.
-
-**6-** A Pull Request is opened from the feature branch into `develop`.
-
-**7-** The PR triggers a CI job that:
-- Generates delta metadata
-- Performs a check-only deployment to QA sandbox
-- Runs Apex tests
-- Runs static code analysis
-
-**8-** If CI passes, the branch can be merged into `develop`.
-
-**9-** Merge into `develop` triggers a real deployment into QA.
-
-**10-** At the end of the sprint, `develop` is merged into `master`, triggering a production deployment.
+- [Salesforce Extensions Documentation](https://developer.salesforce.com/tools/vscode/)
+- [Salesforce CLI Setup Guide](https://developer.salesforce.com/docs/atlas.en-us.sfdx_setup.meta/sfdx_setup/sfdx_setup_intro.htm)
+- [Salesforce DX Developer Guide](https://developer.salesforce.com/docs/atlas.en-us.sfdx_dev.meta/sfdx_dev/sfdx_dev_intro.htm)
+- [Salesforce CLI Command Reference](https://developer.salesforce.com/docs/atlas.en-us.sfdx_cli_reference.meta/sfdx_cli_reference/cli_reference.htm)
