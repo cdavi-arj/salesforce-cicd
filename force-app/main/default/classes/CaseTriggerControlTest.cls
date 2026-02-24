@@ -14,6 +14,7 @@ public class CaseTriggerControlTest {
 
         // Podemos alterar a variável estática para testar comportamento
         CaseTriggerControl.isRunning = true;
-        System.assertEquals(true, CaseTriggerControl.isRunning);
+        System.assertEquals(true, CaseTriggerControl.isRunning); 
+        // update
     }
 }
