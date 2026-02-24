@@ -21,13 +21,16 @@ jobs:
           fetch-depth: 0
 
       # ---------------------------------
-      # Install dependencies
+      # Install system dependencies
       # ---------------------------------
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y jq bc
 
+      # ---------------------------------
+      # Setup Node
+      # ---------------------------------
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -42,13 +45,16 @@ jobs:
           sf version
 
       # ---------------------------------
-      # Install Plugins
+      # Install sfdx-git-delta plugin
       # ---------------------------------
       - name: Install sfdx-git-delta
         run: |
           echo y | sf plugins install sfdx-git-delta
 
-      - name: Install Code Analyzer (optional)
+      # ---------------------------------
+      # Install Code Analyzer (optional)
+      # ---------------------------------
+      - name: Install Code Analyzer
         run: |
           sf plugins install code-analyzer --force
 
@@ -92,6 +98,7 @@ jobs:
       # Create JWT Key
       # ---------------------------------
       - name: Create JWT Key
+        if: steps.check_delta.outputs.skip == 'false'
         run: echo "${{ secrets.SF_JWT_KEY }}" > server.key
 
       # ---------------------------------
@@ -114,8 +121,10 @@ jobs:
         if: steps.check_delta.outputs.skip == 'false'
         id: tests
         run: |
-          TESTS="none"
           BODY="${{ github.event.head_commit.message }}"
+          TESTS="none" # padrão: nenhum teste
+
+          # Extrai padrão Apex::[...]::Apex
           MATCH=$(echo "$BODY" | sed -n 's/.*Apex::\[\(.*\)\]::Apex.*/\1/p')
           if [ ! -z "$MATCH" ]; then
             TRIMMED=$(echo "$MATCH" | tr -d '[:space:]')
@@ -127,10 +136,11 @@ jobs:
               TESTS="$MATCH"
             fi
           fi
+
           echo "tests=$TESTS" >> $GITHUB_OUTPUT
 
       # ---------------------------------
-      # Deploy Delta
+      # Deploy Delta to QA
       # ---------------------------------
       - name: Deploy Delta to QA
         if: steps.check_delta.outputs.skip == 'false'
@@ -161,6 +171,7 @@ jobs:
               --test-level RunSpecifiedTests \
               --tests "$TESTS" \
               --wait 30
+          fi
 
       # ---------------------------------
       # Success
