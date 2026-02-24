@@ -1,0 +1,60 @@
+name: Deploy to QA
+
+on:
+  push:
+    branches:
+      - develop
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Salesforce CLI (sf)
+        run: |
+          npm install --global @salesforce/cli@latest
+          sf version
+
+      - name: Install SFDX CLI (legacy)
+        run: |
+          npm install --global sfdx-cli
+          sfdx version
+
+      - name: Install sfdx-git-delta
+        run: |
+          echo y | sfdx plugins:install sfdx-git-delta
+          sfdx plugins
+
+      # Gerar delta entre último commit
+      - name: Generate Delta
+        run: |
+          sfdx sgd:source:delta \
+            --to HEAD \
+            --from HEAD~1 \
+            --output delta \
+            --generate-delta
+
+      - name: Create JWT Key
+        run: echo "${{ secrets.SF_JWT_KEY }}" > server.key
+
+      - name: Authenticate QA Sandbox
+        run: |
+          sf org login jwt \
+            --client-id ${{ secrets.SF_CLIENT_ID }} \
+            --jwt-key-file server.key \
+            --username ${{ secrets.SF_USERNAME_QA }} \
+            --alias qa \
+            --instance-url https://test.salesforce.com
+
+      - name: Deploy Delta to QA
+        run: |
+          sf project deploy start \
+            --source-dir delta \
+            --target-org qa \
+            --test-level RunLocalTests \
+            --wait 30

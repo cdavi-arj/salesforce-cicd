@@ -1,0 +1,189 @@
+name: Validate Delta Deployment to QA
+
+on:
+  pull_request:
+    branches:
+      - develop
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      # ---------------------------------
+      # Checkout repository
+      # ---------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ---------------------------------
+      # Install dependencies
+      # ---------------------------------
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq bc
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # ---------------------------------
+      # Install Salesforce CLI
+      # ---------------------------------
+      - name: Install Salesforce CLI
+        run: |
+          npm install -g @salesforce/cli
+          sf version
+
+      # ---------------------------------
+      # Install Plugins
+      # ---------------------------------
+      - name: Install sfdx-git-delta
+        run: |
+          echo y | sf plugins install sfdx-git-delta
+
+      - name: Install Code Analyzer
+        run: |
+          sf plugins install code-analyzer --force
+
+      # ---------------------------------
+      # Run Code Analyzer
+      # ---------------------------------
+      - name: Run Code Analyzer
+        run: |
+          sf code-analyzer run \
+            --workspace force-app \
+            --severity-threshold 3
+
+      # ---------------------------------
+      # Generate Delta
+      # ---------------------------------
+      - name: Generate Delta
+        run: |
+          mkdir -p delta
+          BASE_BRANCH=${{ github.event.pull_request.base.ref }}
+          git fetch origin $BASE_BRANCH
+
+          sf sgd source delta \
+            --to HEAD \
+            --from origin/$BASE_BRANCH \
+            --output-dir delta \
+            --generate-delta
+
+      # ---------------------------------
+      # Check if delta is empty
+      # ---------------------------------
+      - name: Check Delta
+        id: check_delta
+        run: |
+          if [ -z "$(ls -A delta)" ]; then
+            echo "No delta found"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Delta found"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
+      # ---------------------------------
+      # Authenticate in QA
+      # ---------------------------------
+      - name: Authenticate QA
+        if: steps.check_delta.outputs.skip == 'false'
+        run: |
+          echo "${{ secrets.SF_JWT_KEY }}" > server.key
+
+          sf org login jwt \
+            --client-id ${{ secrets.SF_CLIENT_ID }} \
+            --jwt-key-file server.key \
+            --username ${{ secrets.SF_USERNAME_QA }} \
+            --alias qa \
+            --instance-url https://test.salesforce.com
+
+      # ---------------------------------
+      # Extract Apex Tests from PR Body
+      # ---------------------------------
+      - name: Extract Apex Tests
+        if: steps.check_delta.outputs.skip == 'false'
+        id: tests
+        run: |
+          BODY="${{ github.event.pull_request.body }}"
+
+          TESTS="none" # padrão: nenhum teste
+
+          # Extrai padrão Apex::[...]::Apex
+          MATCH=$(echo "$BODY" | sed -n 's/.*Apex::\[\(.*\)\]::Apex.*/\1/p')
+          if [ ! -z "$MATCH" ]; then
+            TRIMMED=$(echo "$MATCH" | tr -d '[:space:]')
+            if [ "$TRIMMED" = "all" ]; then
+              TESTS="all"
+            elif [ "$TRIMMED" = "none" ]; then
+              TESTS="none"
+            else
+              TESTS="$MATCH"
+            fi
+          fi
+
+          echo "tests=$TESTS" >> $GITHUB_OUTPUT
+
+      # ---------------------------------
+      # Validate Deployment
+      # ---------------------------------
+      - name: Validate Deployment
+        if: steps.check_delta.outputs.skip == 'false'
+        run: |
+          TESTS="${{ steps.tests.outputs.tests }}"
+
+          if [ "$TESTS" = "none" ]; then
+            echo "No tests specified. Running relevant tests only."
+            sf project deploy validate \
+              --source-dir delta \
+              --target-org qa \
+              --test-level RunRelevantTests \
+              --coverage-formatters json \
+              --results-dir coverage
+
+          elif [ "$TESTS" = "all" ]; then
+            echo "Running all tests..."
+            sf project deploy validate \
+              --source-dir delta \
+              --target-org qa \
+              --test-level RunAllTestsInOrg \
+              --coverage-formatters json \
+              --results-dir coverage
+
+          else
+            echo "Running specified tests: $TESTS"
+            sf project deploy validate \
+              --source-dir delta \
+              --target-org qa \
+              --test-level RunSpecifiedTests \
+              --tests "$TESTS" \
+              --coverage-formatters json \
+              --results-dir coverage
+          fi
+
+      # ---------------------------------
+      # Enforce Coverage >= 85%
+      # ---------------------------------
+      - name: Enforce Coverage
+        if: steps.check_delta.outputs.skip == 'false' && steps.tests.outputs.tests != 'none'
+        run: |
+          COVERAGE=$(jq '.result.summary.testRunCoverage' coverage/test-result-codecoverage.json)
+
+          echo "Coverage: $COVERAGE%"
+
+          if (( $(echo "$COVERAGE < 85" | bc -l) )); then
+            echo "Coverage below 85%. Failing pipeline."
+            exit 1
+          fi
+
+      # ---------------------------------
+      # Success
+      # ---------------------------------
+      - name: Success
+        if: success()
+        run: echo "Validation completed successfully."
