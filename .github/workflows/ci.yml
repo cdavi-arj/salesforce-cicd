@@ -43,16 +43,6 @@ jobs:
           sf version
 
       # ---------------------------------
-      # Install SFDX-Git-Delta globally
-      # ---------------------------------
-      - name: Install SFDX-Git-Delta
-        run: |
-          npm install -g sfdx-git-delta
-          # Adiciona binários globais ao PATH
-          export PATH="$PATH:$(npm bin -g)"
-          sgd --version
-
-      # ---------------------------------
       # Install Code Analyzer Plugin
       # ---------------------------------
       - name: Install Code Analyzer
@@ -70,16 +60,14 @@ jobs:
             --severity-threshold 3
 
       # ---------------------------------
-      # Generate Delta
+      # Generate Delta using npx (local execution)
       # ---------------------------------
       - name: Generate Delta
         run: |
           mkdir -p delta
           BASE_BRANCH=${{ github.event.pull_request.base.ref }}
           git fetch origin $BASE_BRANCH
-          # Adiciona binários globais ao PATH
-          export PATH="$PATH:$(npm bin -g)"
-          sgd source delta \
+          npx sfdx-git-delta source delta \
             --to HEAD \
             --from origin/$BASE_BRANCH \
             --output-dir delta \
