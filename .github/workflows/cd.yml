@@ -15,18 +15,28 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install Salesforce CLI
-        run: npm install --global @salesforce/cli
+      - name: Install Salesforce CLI (sf)
+        run: |
+          npm install --global @salesforce/cli@latest
+          sf version
+
+      - name: Install SFDX CLI (legacy)
+        run: |
+          npm install --global sfdx-cli
+          sfdx version
 
       - name: Install sfdx-git-delta
-        run: sf plugins install sfdx-git-delta
+        run: |
+          echo y | sfdx plugins:install sfdx-git-delta
+          sfdx plugins
 
+      # Gerar delta entre último commit
       - name: Generate Delta
         run: |
-          sf sgd source delta \
+          sfdx sgd:source:delta \
             --to HEAD \
             --from HEAD~1 \
-            --output-dir delta \
+            --output delta \
             --generate-delta
 
       - name: Create JWT Key
@@ -41,7 +51,7 @@ jobs:
             --alias qa \
             --instance-url https://test.salesforce.com
 
-      - name: Deploy to QA
+      - name: Deploy Delta to QA
         run: |
           sf project deploy start \
             --source-dir delta \

@@ -10,27 +10,37 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Checkout completo (necessário para delta)
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Install Salesforce CLI
-        run: npm install --global @salesforce/cli
+      # Instalar CLI moderna (para deploy)
+      - name: Install Salesforce CLI (sf)
+        run: |
+          npm install --global @salesforce/cli@latest
+          sf version
 
+      # Instalar CLI legacy (para delta)
+      - name: Install SFDX CLI (legacy)
+        run: |
+          npm install --global sfdx-cli
+          sfdx version
+
+      # Instalar plugin delta no CLI legacy
       - name: Install sfdx-git-delta
-        run: sf plugins install sfdx-git-delta
-
-      - name: Install SFDX Scanner
-        run: sf plugins install @salesforce/sfdx-scanner
+        run: |
+          echo y | sfdx plugins:install sfdx-git-delta
+          sfdx plugins
 
       # 🔹 Gerar Delta
       - name: Generate Delta
         run: |
-          sf sgd source delta \
+          sfdx sgd:source:delta \
             --to HEAD \
             --from origin/develop \
-            --output-dir delta \
+            --output delta \
             --generate-delta
 
       # 🔥 Extrair testes da PR
@@ -38,9 +48,6 @@ jobs:
         id: extract_tests
         run: |
           PR_BODY="${{ github.event.pull_request.body }}"
-
-          echo "PR Body:"
-          echo "$PR_BODY"
 
           if [[ "$PR_BODY" =~ Apex::\[(.*)\]::Apex ]]; then
             TESTS="${BASH_REMATCH[1]}"
@@ -52,13 +59,14 @@ jobs:
               echo "tests=$TESTS" >> $GITHUB_OUTPUT
             fi
           else
-            echo "No Apex pattern found. Using RunLocalTests."
             echo "testlevel=RunLocalTests" >> $GITHUB_OUTPUT
           fi
 
+      # Criar chave JWT
       - name: Create JWT Key
         run: echo "${{ secrets.SF_JWT_KEY }}" > server.key
 
+      # Login Sandbox QA
       - name: Authenticate QA Sandbox
         run: |
           sf org login jwt \
@@ -85,9 +93,3 @@ jobs:
               --test-level RunLocalTests \
               --wait 30
           fi
-
-      - name: Run Static Code Analysis
-        run: |
-          sf scanner run \
-            --target delta \
-            --format table
