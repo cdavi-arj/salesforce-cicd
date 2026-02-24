@@ -110,33 +110,23 @@ jobs:
         if: steps.check_delta.outputs.skip == 'false'
         id: tests
         run: |
-          echo "${{ github.event.pull_request.body }}" > pr_body.txt
+          BODY="${{ github.event.pull_request.body }}"
 
-          cat << 'EOF' > parsePR.js
-          const fs = require('fs');
-          const body = fs.readFileSync('pr_body.txt', 'utf8');
+          TESTS="none" # padrão: nenhum teste
 
-          let tests = 'none'; // padrão: nenhum teste
+          # Extrai padrão Apex::[...]::Apex
+          MATCH=$(echo "$BODY" | sed -n 's/.*Apex::\[\(.*\)\]::Apex.*/\1/p')
+          if [ ! -z "$MATCH" ]; then
+            TRIMMED=$(echo "$MATCH" | tr -d '[:space:]')
+            if [ "$TRIMMED" = "all" ]; then
+              TESTS="all"
+            elif [ "$TRIMMED" = "none" ]; then
+              TESTS="none"
+            else
+              TESTS="$MATCH"
+            fi
+          fi
 
-          // Padrão PR: Apex::[...]::Apex
-          const match = body.match(/Apex::\[(.*?)\]::Apex/);
-          if (match && match[1]) {
-              const trimmed = match[1].split(',').map(c => c.trim()).filter(c => c.length>0);
-              if (trimmed.length === 1 && trimmed[0].toLowerCase() === 'all') {
-                  tests = 'all';
-              } else if (trimmed.length === 1 && trimmed[0].toLowerCase() === 'none') {
-                  tests = 'none';
-              } else {
-                  tests = trimmed.join(',');
-              }
-          }
-
-          fs.writeFileSync('testsToRun.txt', tests);
-          EOF
-
-          node parsePR.js
-
-          TESTS=$(cat testsToRun.txt)
           echo "tests=$TESTS" >> $GITHUB_OUTPUT
 
       # ---------------------------------
@@ -174,6 +164,7 @@ jobs:
               --tests "$TESTS" \
               --coverage-formatters json \
               --results-dir coverage
+          fi
 
       # ---------------------------------
       # Enforce Coverage >= 85%
