@@ -104,9 +104,7 @@ jobs:
             --instance-url https://test.salesforce.com
 
       # ---------------------------------
-      # Extract Apex tests from PR description
-      # Pattern expected:
-      # Apex::[Class1,Class2]::Apex
+      # Extract Apex tests from PR Body
       # ---------------------------------
       - name: Extract Apex Tests
         if: steps.check_delta.outputs.skip == 'false'
@@ -116,18 +114,21 @@ jobs:
 
           cat << 'EOF' > parsePR.js
           const fs = require('fs');
-
           const body = fs.readFileSync('pr_body.txt', 'utf8');
-          let tests = 'all';
 
+          let tests = 'none'; // padrão: nenhum teste
+
+          // Padrão PR: Apex::[...]::Apex
           const match = body.match(/Apex::\[(.*?)\]::Apex/);
-
           if (match && match[1]) {
-              tests = match[1]
-                  .split(',')
-                  .map(c => c.trim())
-                  .filter(c => c.length > 0)
-                  .join(',');
+              const trimmed = match[1].split(',').map(c => c.trim()).filter(c => c.length>0);
+              if (trimmed.length === 1 && trimmed[0].toLowerCase() === 'all') {
+                  tests = 'all';
+              } else if (trimmed.length === 1 && trimmed[0].toLowerCase() === 'none') {
+                  tests = 'none';
+              } else {
+                  tests = trimmed.join(',');
+              }
           }
 
           fs.writeFileSync('testsToRun.txt', tests);
@@ -146,7 +147,16 @@ jobs:
         run: |
           TESTS="${{ steps.tests.outputs.tests }}"
 
-          if [ "$TESTS" = "all" ]; then
+          if [ "$TESTS" = "none" ]; then
+            echo "No tests will be run"
+            sf project deploy validate \
+              --source-dir delta \
+              --target-org qa \
+              --test-level NoTestRun \
+              --coverage-formatters json \
+              --results-dir coverage
+
+          elif [ "$TESTS" = "all" ]; then
             echo "Running all tests..."
             sf project deploy validate \
               --source-dir delta \
@@ -154,6 +164,7 @@ jobs:
               --test-level RunAllTestsInOrg \
               --coverage-formatters json \
               --results-dir coverage
+
           else
             echo "Running specified tests: $TESTS"
             sf project deploy validate \
@@ -163,13 +174,12 @@ jobs:
               --tests "$TESTS" \
               --coverage-formatters json \
               --results-dir coverage
-          fi
 
       # ---------------------------------
       # Enforce Coverage >= 85%
       # ---------------------------------
       - name: Enforce Coverage
-        if: steps.check_delta.outputs.skip == 'false'
+        if: steps.check_delta.outputs.skip == 'false' && steps.tests.outputs.tests != 'none'
         run: |
           COVERAGE=$(jq '.result.summary.testRunCoverage' coverage/test-result-codecoverage.json)
 
