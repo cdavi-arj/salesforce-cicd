@@ -1,7 +1,7 @@
 name: Deploy to QA
 
 on:
-  pull_request:
+  push:
     branches:
       - develop
 
@@ -40,10 +40,10 @@ jobs:
       - name: Generate Delta
         run: |
           mkdir -p delta
-          BASE_BRANCH=${{ github.event.pull_request.base.ref }}
+          # compara com o commit anterior na develop
           sf sgd source delta \
             --to HEAD \
-            --from origin/$BASE_BRANCH \
+            --from HEAD~1 \
             --output-dir delta \
             --generate-delta
 
@@ -59,7 +59,6 @@ jobs:
           else
             echo "Delta found"
             echo "skip=false" >> $GITHUB_OUTPUT
-          fi
 
       # ---------------------------------
       # Create JWT Key
@@ -71,7 +70,6 @@ jobs:
       # Authenticate QA Sandbox
       # ---------------------------------
       - name: Authenticate QA
-        if: steps.check_delta.outputs.skip == 'false'
         run: |
           sf org login jwt \
             --client-id ${{ secrets.SF_CLIENT_ID }} \
@@ -81,27 +79,27 @@ jobs:
             --instance-url https://test.salesforce.com
 
       # ---------------------------------
-      # Extract Apex Tests from PR Body
+      # Determine tests to run
       # ---------------------------------
-      - name: Extract Apex Tests
-        if: steps.check_delta.outputs.skip == 'false'
+      - name: Set Tests to Run
         id: tests
         run: |
-          BODY="${{ github.event.pull_request.body }}"
-
+          # padrão: nenhum teste específico
           TESTS="none"
 
-          # Procura padrão Apex::[...]::Apex
-          MATCH=$(echo "$BODY" | sed -n 's/.*Apex::\[\(.*\)\]::Apex.*/\1/p')
-
-          if [ ! -z "$MATCH" ]; then
-            TRIMMED=$(echo "$MATCH" | tr -d '[:space:]')
-            if [ "$TRIMMED" = "all" ]; then
-              TESTS="all"
-            elif [ "$TRIMMED" = "none" ]; then
-              TESTS="none"
-            else
-              TESTS="$MATCH"
+          # Se estiver disponível, tenta extrair da descrição da PR (merge commit)
+          if [ ! -z "${{ github.event.head_commit.message }}" ]; then
+            BODY="${{ github.event.head_commit.message }}"
+            MATCH=$(echo "$BODY" | sed -n 's/.*Apex::\[\(.*\)\]::Apex.*/\1/p')
+            if [ ! -z "$MATCH" ]; then
+              TRIMMED=$(echo "$MATCH" | tr -d '[:space:]')
+              if [ "$TRIMMED" = "all" ]; then
+                TESTS="all"
+              elif [ "$TRIMMED" = "none" ]; then
+                TESTS="none"
+              else
+                TESTS="$MATCH"
+              fi
             fi
           fi
 
@@ -145,4 +143,4 @@ jobs:
       # ---------------------------------
       - name: Success
         if: success()
-        run: echo "Deployment validation completed successfully."
+        run: echo "Deployment to QA completed successfully."
