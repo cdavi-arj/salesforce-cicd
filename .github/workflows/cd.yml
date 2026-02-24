@@ -10,29 +10,29 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '18'
+      - name: Install Salesforce CLI
+        run: npm install --global @salesforce/cli
 
-      - run: npm install --global @salesforce/cli
+      - name: Create server.key file
+        run: |
+          echo "${{ secrets.SF_JWT_KEY }}" > server.key
 
-      - name: Create JWT key file
-        run: echo "${{ secrets.SF_JWT_KEY }}" > server.key
-
-      - name: Authenticate to QA
+      - name: Authenticate to QA Sandbox
         run: |
           sf org login jwt \
             --client-id ${{ secrets.SF_CLIENT_ID }} \
             --jwt-key-file server.key \
             --username ${{ secrets.SF_USERNAME_QA }} \
-            --instance-url https://test.salesforce.com \
-            --alias qa
+            --alias qa \
+            --instance-url https://test.salesforce.com
 
       - name: Deploy to QA
         run: |
           sf project deploy start \
+            --source-dir force-app \
             --target-org qa \
             --test-level RunLocalTests \
-            --wait 45
+            --wait 30

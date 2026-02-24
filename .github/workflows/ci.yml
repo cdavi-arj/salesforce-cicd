@@ -10,30 +10,30 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout do código
+      # 1️⃣ Checkout
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ Instalar Salesforce CLI
+      # 2️⃣ Install Salesforce CLI
       - name: Install Salesforce CLI
         run: npm install --global @salesforce/cli
 
-      # 3️⃣ Criar arquivo de chave privada
+      # 3️⃣ Create JWT key file
       - name: Create server.key file
         run: |
           echo "${{ secrets.SF_JWT_KEY }}" > server.key
 
-      # 4️⃣ Autenticar na org QA via JWT
-      - name: Authenticate to QA
+      # 4️⃣ Authenticate to Sandbox QA
+      - name: Authenticate to QA Sandbox
         run: |
           sf org login jwt \
             --client-id ${{ secrets.SF_CLIENT_ID }} \
             --jwt-key-file server.key \
-            --username ${{ secrets.SF_USERNAME }} \
+            --username ${{ secrets.SF_USERNAME_QA }} \
             --alias qa \
             --instance-url https://test.salesforce.com
 
-      # 5️⃣ Validar deploy (sem aplicar)
+      # 5️⃣ Validate Deployment
       - name: Validate Deployment
         run: |
           sf project deploy validate \
