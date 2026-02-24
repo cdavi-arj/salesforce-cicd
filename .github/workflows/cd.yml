@@ -10,38 +10,75 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: ${{ github.actor != 'dependabot[bot]' }}
 
     steps:
       # ---------------------------------
       # Checkout repository
       # ---------------------------------
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # ---------------------------------
+      # Install system dependencies
+      # ---------------------------------
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq bc
+
+      # ---------------------------------
+      # Setup Node 20
+      # ---------------------------------
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
       # ---------------------------------
       # Install Salesforce CLI
       # ---------------------------------
       - name: Install Salesforce CLI
         run: |
-          wget https://developer.salesforce.com/media/salesforce-cli/sfdx/channels/stable/sfdx-linux-x64.tar.xz
-          mkdir ~/sfdx
-          tar xJf sfdx-linux-x64.tar.xz -C ~/sfdx --strip-components 1
-          echo "$HOME/sfdx/bin" >> $GITHUB_PATH
-          ~/sfdx/bin/sfdx version
+          npm install -g @salesforce/cli
+          sf version
 
       # ---------------------------------
-      # Install sfdx-git-delta plugin
+      # Install sfdx-git-delta
       # ---------------------------------
       - name: Install sfdx-git-delta
         run: |
-          echo y | sfdx plugins:install sfdx-git-delta
-          sfdx plugins
+          echo y | sf plugins install sfdx-git-delta
+          sf plugins
 
       # ---------------------------------
-      # Create JWT key
+      # Generate delta
+      # ---------------------------------
+      - name: Generate Delta
+        run: |
+          mkdir -p delta
+          sf sgd source delta \
+            --to HEAD \
+            --from HEAD~1 \
+            --output-dir delta \
+            --generate-delta
+
+      # ---------------------------------
+      # Check if delta is empty
+      # ---------------------------------
+      - name: Check Delta
+        id: check_delta
+        run: |
+          if [ -z "$(ls -A delta)" ]; then
+            echo "No changes to deploy. Skipping."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Delta found"
+            echo "skip=false" >> $GITHUB_OUTPUT
+
+      # ---------------------------------
+      # Create JWT Key
       # ---------------------------------
       - name: Create JWT Key
         run: echo "${{ secrets.SF_JWT_KEY }}" > server.key
@@ -50,6 +87,7 @@ jobs:
       # Authenticate QA Sandbox
       # ---------------------------------
       - name: Authenticate QA
+        if: steps.check_delta.outputs.skip == 'false'
         run: |
           sf org login jwt \
             --client-id ${{ secrets.SF_CLIENT_ID }} \
@@ -59,35 +97,7 @@ jobs:
             --instance-url https://test.salesforce.com
 
       # ---------------------------------
-      # Generate Delta
-      # ---------------------------------
-      - name: Generate Delta
-        run: |
-          mkdir -p delta
-          # Compara com a branch remota develop para push direto
-          sf sgd source delta \
-            --to HEAD \
-            --from origin/develop \
-            --output-dir delta \
-            --generate-delta \
-            --source force-app/
-
-      # ---------------------------------
-      # Check if Delta is Empty
-      # ---------------------------------
-      - name: Check Delta
-        id: check_delta
-        run: |
-          if [ -z "$(ls -A delta)" ]; then
-            echo "No changes to deploy. Skipping."
-            echo "skip=true" >> $GITHUB_OUTPUT
-          else
-            echo "Delta found."
-            echo "skip=false" >> $GITHUB_OUTPUT
-
-      # ---------------------------------
       # Determine tests to run from commit message
-      # Use pattern: Apex::[Class1,Class2]::Apex
       # ---------------------------------
       - name: Set Tests to Run
         if: steps.check_delta.outputs.skip == 'false'
@@ -140,6 +150,21 @@ jobs:
               --test-level RunSpecifiedTests \
               --tests "$TESTS" \
               --wait 30
+
+      # ---------------------------------
+      # Enforce coverage >= 85% (apenas se testes foram executados)
+      # ---------------------------------
+      - name: Enforce Coverage
+        if: steps.check_delta.outputs.skip == 'false' && steps.tests.outputs.tests != 'none'
+        run: |
+          COVERAGE=$(jq '.result.summary.testRunCoverage' coverage/test-result-codecoverage.json)
+
+          echo "Coverage: $COVERAGE%"
+
+          if (( $(echo "$COVERAGE < 85" | bc -l) )); then
+            echo "Coverage below 85%. Failing pipeline."
+            exit 1
+          fi
 
       # ---------------------------------
       # Success
