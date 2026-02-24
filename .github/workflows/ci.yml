@@ -10,21 +10,33 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # ---------------------------------
+      # Checkout repository
+      # ---------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # ---------------------------------
+      # Install Salesforce CLI (modern)
+      # ---------------------------------
       - name: Install Salesforce CLI
         run: |
           npm install --global @salesforce/cli
           sf version
 
+      # ---------------------------------
+      # Install sfdx-git-delta plugin
+      # ---------------------------------
       - name: Install sfdx-git-delta plugin
         run: |
           echo y | sf plugins install sfdx-git-delta
           sf plugins
 
+      # ---------------------------------
+      # Generate Delta
+      # ---------------------------------
       - name: Generate Delta
         run: |
           mkdir -p delta
@@ -34,15 +46,23 @@ jobs:
             --output-dir delta \
             --generate-delta
 
+      # ---------------------------------
+      # Check if Delta has changes
+      # ---------------------------------
       - name: Check if Delta is Empty
         id: check_delta
         run: |
           if [ -z "$(ls -A delta)" ]; then
+            echo "No changes detected. Skipping deployment."
             echo "skip=true" >> $GITHUB_OUTPUT
           else
+            echo "Changes detected."
             echo "skip=false" >> $GITHUB_OUTPUT
           fi
 
+      # ---------------------------------
+      # Authenticate to QA (Sandbox)
+      # ---------------------------------
       - name: Authenticate to QA
         if: steps.check_delta.outputs.skip == 'false'
         run: |
@@ -54,17 +74,29 @@ jobs:
             --alias qa \
             --instance-url https://test.salesforce.com
 
+      # ---------------------------------
+      # Extract Apex Tests from PR Body
+      # Pattern expected:
+      # Apex::[Class1,Class2]::Apex
+      # ---------------------------------
       - name: Extract Apex Tests
         if: steps.check_delta.outputs.skip == 'false'
         id: tests
         run: |
           BODY="${{ github.event.pull_request.body }}"
-          TESTS=$(echo "$BODY" | grep -oP '(?<=Apex::\[).*?(?=\]::Apex)')
+
+          TESTS=$(echo "$BODY" | sed -n 's/.*Apex::\[\(.*\)\]::Apex.*/\1/p')
+
           if [ -z "$TESTS" ]; then
+            echo "No test pattern found. Running all tests."
             TESTS="all"
           fi
+
           echo "tests=$TESTS" >> $GITHUB_OUTPUT
 
+      # ---------------------------------
+      # Validate Deployment
+      # ---------------------------------
       - name: Validate Deployment in QA
         if: steps.check_delta.outputs.skip == 'false'
         run: |
