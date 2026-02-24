@@ -19,7 +19,23 @@ jobs:
           fetch-depth: 0
 
       # ---------------------------------
-      # Install Salesforce CLI (modern)
+      # Install system dependencies
+      # ---------------------------------
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq bc
+
+      # ---------------------------------
+      # Setup Node.js
+      # ---------------------------------
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+
+      # ---------------------------------
+      # Install Salesforce CLI
       # ---------------------------------
       - name: Install Salesforce CLI
         run: |
@@ -94,18 +110,32 @@ jobs:
             --instance-url https://test.salesforce.com
 
       # ---------------------------------
-      # Extract Apex Tests from PR Body
+      # Extract Apex Tests from PR Body via Node.js
       # ---------------------------------
       - name: Extract Apex Tests
         if: steps.check_delta.outputs.skip == 'false'
         id: tests
         run: |
-          BODY="${{ github.event.pull_request.body }}"
-          TESTS=$(echo "$BODY" | sed -n 's/.*Apex::\[\(.*\)\]::Apex.*/\1/p')
-          if [ -z "$TESTS" ]; then
-            echo "No test pattern found. Running all tests."
-            TESTS="all"
-          fi
+          # Salva corpo da PR em variável de ambiente
+          echo "${{ github.event.pull_request.body }}" > pr_body.txt
+          
+          # Cria script Node.js inline
+          cat << 'EOF' > parsePR.js
+          const fs = require('fs');
+          const body = fs.readFileSync('pr_body.txt', 'utf8');
+          let tests = 'all';
+          const match = body.match(/Apex::\[(.*?)\]::Apex/);
+          if (match && match[1]) {
+            tests = match[1].split(',').map(c => c.trim()).join(',');
+          }
+          fs.writeFileSync('testsToRun.txt', tests);
+          EOF
+
+          # Executa script
+          node parsePR.js
+
+          # Lê resultado
+          TESTS=$(cat testsToRun.txt)
           echo "tests=$TESTS" >> $GITHUB_OUTPUT
 
       # ---------------------------------
