@@ -31,7 +31,7 @@ jobs:
             --jwt-key-file server.key \
             --username ${{ secrets.SF_USERNAME }} \
             --alias qa \
-            --instance-url https://login.salesforce.com
+            --instance-url https://test.salesforce.com
 
       # 5️⃣ Validar deploy (sem aplicar)
       - name: Validate Deployment
