@@ -13,18 +13,12 @@ jobs:
     if: ${{ github.actor != 'dependabot[bot]' }}
 
     steps:
-      # ---------------------------------
-      # Checkout repository
-      # ---------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # ---------------------------------
-      # Install dependencies
-      # ---------------------------------
-      - name: Install system dependencies
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y jq bc
@@ -34,30 +28,18 @@ jobs:
         with:
           node-version: 20
 
-      # ---------------------------------
-      # Install Salesforce CLI
-      # ---------------------------------
       - name: Install Salesforce CLI
         run: |
           npm install -g @salesforce/cli
           sf version
 
-      # ---------------------------------
-      # Install sfdx-git-delta plugin
-      # ---------------------------------
       - name: Install sfdx-git-delta
         run: |
           echo y | sf plugins install sfdx-git-delta
 
-      # ---------------------------------
-      # Create JWT Key
-      # ---------------------------------
       - name: Create JWT Key
         run: echo "${{ secrets.SF_JWT_KEY }}" > server.key
 
-      # ---------------------------------
-      # Authenticate QA Sandbox
-      # ---------------------------------
       - name: Authenticate QA
         run: |
           sf org login jwt \
@@ -67,22 +49,17 @@ jobs:
             --alias qa \
             --instance-url https://test.salesforce.com
 
-      # ---------------------------------
-      # Generate Delta
-      # ---------------------------------
       - name: Generate Delta
         run: |
           mkdir -p delta
+          git fetch origin develop
           sf sgd source delta \
             --to HEAD \
-            --from HEAD~1 \
+            --from origin/develop \
             --output-dir delta \
             --generate-delta \
             --source force-app/
 
-      # ---------------------------------
-      # Check if delta is empty
-      # ---------------------------------
       - name: Check Delta
         id: check_delta
         run: |
@@ -93,9 +70,6 @@ jobs:
             echo "Changes detected."
             echo "skip=false" >> $GITHUB_OUTPUT
 
-      # ---------------------------------
-      # Determine tests to run from commit message
-      # ---------------------------------
       - name: Set Tests to Run
         if: steps.check_delta.outputs.skip == 'false'
         id: tests
@@ -115,9 +89,6 @@ jobs:
           fi
           echo "tests=$TESTS" >> $GITHUB_OUTPUT
 
-      # ---------------------------------
-      # Deploy Delta to QA
-      # ---------------------------------
       - name: Deploy Delta
         if: steps.check_delta.outputs.skip == 'false'
         run: |
@@ -154,9 +125,6 @@ jobs:
               --ignore-warnings \
               --ignore-conflicts
 
-      # ---------------------------------
-      # Deploy destructive changes if any
-      # ---------------------------------
       - name: Deploy Destructive Changes
         if: steps.check_delta.outputs.skip == 'false'
         run: |
@@ -172,9 +140,6 @@ jobs:
           else
             echo "No destructive changes found."
 
-      # ---------------------------------
-      # Success
-      # ---------------------------------
       - name: Success
         if: success()
         run: echo "Deployment completed successfully."
