@@ -1,10 +1,7 @@
 {
   "rules": {
     "pmd:ApexDoc": {
-      "severity": 5
-    },
-    "pmd:AvoidDebugStatements": {
-      "severity": 5
+      "disable": true
     }
   }
 }

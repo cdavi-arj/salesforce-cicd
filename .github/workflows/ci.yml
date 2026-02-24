@@ -19,7 +19,7 @@ jobs:
           fetch-depth: 0
 
       # ---------------------------------
-      # Install dependencies (jq + bc)
+      # Install system dependencies
       # ---------------------------------
       - name: Install system dependencies
         run: |
@@ -45,7 +45,7 @@ jobs:
 
       # ---------------------------------
       # Run Code Quality Scan
-      # Blocks severity >= 4
+      # Blocks severity >= 3 (Moderate+)
       # ---------------------------------
       - name: Run Code Quality Scan
         run: |
@@ -54,9 +54,8 @@ jobs:
             --severity-threshold 3 \
             --config-file .sfca-config.json
 
-
       # ---------------------------------
-      # Generate Delta from PR base branch
+      # Generate Delta
       # ---------------------------------
       - name: Generate Delta
         run: |
@@ -85,7 +84,7 @@ jobs:
           fi
 
       # ---------------------------------
-      # Authenticate to QA (Sandbox)
+      # Authenticate to QA
       # ---------------------------------
       - name: Authenticate to QA
         if: steps.check_delta.outputs.skip == 'false'
@@ -100,8 +99,7 @@ jobs:
 
       # ---------------------------------
       # Extract Apex Tests from PR Body
-      # Expected pattern:
-      # Apex::[Class1,Class2]::Apex
+      # Pattern: Apex::[Class1,Class2]::Apex
       # ---------------------------------
       - name: Extract Apex Tests
         if: steps.check_delta.outputs.skip == 'false'
@@ -141,13 +139,12 @@ jobs:
           fi
 
       # ---------------------------------
-      # Enforce Minimum Coverage 85%
+      # Enforce Coverage >= 85%
       # ---------------------------------
       - name: Enforce Coverage >= 85%
         if: steps.check_delta.outputs.skip == 'false'
         run: |
           COVERAGE=$(jq '.result.summary.testRunCoverage' coverage/test-result-codecoverage.json)
-
           echo "Org Coverage: $COVERAGE%"
 
           if (( $(echo "$COVERAGE < 85" | bc -l) )); then
@@ -155,9 +152,6 @@ jobs:
             exit 1
           fi
 
-      # ---------------------------------
-      # Success Message
-      # ---------------------------------
       - name: Success
         if: success()
         run: echo "QA Validation completed successfully."
