@@ -1,7 +1,9 @@
 {
   "rules": {
     "pmd:ApexDoc": {
-      "disable": true
+      "override": {
+        "enabled": false
+      }
     }
   }
 }
