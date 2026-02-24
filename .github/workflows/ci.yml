@@ -51,7 +51,9 @@ jobs:
         run: |
           sf code-analyzer run \
             --workspace force-app \
-            --severity-threshold 4
+            --severity-threshold 3 \
+            --config-file .sfca-config.json
+
 
       # ---------------------------------
       # Generate Delta from PR base branch
