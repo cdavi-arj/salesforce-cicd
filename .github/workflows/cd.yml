@@ -1,4 +1,4 @@
-name: Deploy Delta to QA
+name: Deploy to QA
 
 on:
   push:
@@ -16,36 +16,32 @@ jobs:
       # ---------------------------------
       # Checkout repository
       # ---------------------------------
-      - name: Checkout repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      # ---------------------------------
-      # Setup Node
-      # ---------------------------------
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
 
       # ---------------------------------
       # Install Salesforce CLI
       # ---------------------------------
       - name: Install Salesforce CLI
         run: |
-          npm install -g @salesforce/cli
-          sf version
+          wget https://developer.salesforce.com/media/salesforce-cli/sfdx/channels/stable/sfdx-linux-x64.tar.xz
+          mkdir ~/sfdx
+          tar xJf sfdx-linux-x64.tar.xz -C ~/sfdx --strip-components 1
+          echo "$HOME/sfdx/bin" >> $GITHUB_PATH
+          ~/sfdx/bin/sfdx version
 
       # ---------------------------------
-      # Install sfdx-git-delta
+      # Install sfdx-git-delta plugin
       # ---------------------------------
       - name: Install sfdx-git-delta
         run: |
-          echo y | sf plugins install sfdx-git-delta
+          echo y | sfdx plugins:install sfdx-git-delta
+          sfdx plugins
 
       # ---------------------------------
-      # Create JWT Key
+      # Create JWT key
       # ---------------------------------
       - name: Create JWT Key
         run: echo "${{ secrets.SF_JWT_KEY }}" > server.key
@@ -63,34 +59,35 @@ jobs:
             --instance-url https://test.salesforce.com
 
       # ---------------------------------
-      # Generate Delta (HEAD^ → HEAD)
+      # Generate Delta
       # ---------------------------------
       - name: Generate Delta
         run: |
           mkdir -p delta
+          # Compara com a branch remota develop para push direto
           sf sgd source delta \
             --to HEAD \
-            --from HEAD^ \
+            --from origin/develop \
             --output-dir delta \
             --generate-delta \
             --source force-app/
 
       # ---------------------------------
-      # Check if delta is empty
+      # Check if Delta is Empty
       # ---------------------------------
       - name: Check Delta
         id: check_delta
         run: |
           if [ -z "$(ls -A delta)" ]; then
-            echo "No changes detected. Skipping deploy."
+            echo "No changes to deploy. Skipping."
             echo "skip=true" >> $GITHUB_OUTPUT
           else
-            echo "Changes detected."
+            echo "Delta found."
             echo "skip=false" >> $GITHUB_OUTPUT
 
       # ---------------------------------
       # Determine tests to run from commit message
-      # Pattern: Apex::[Class1,Class2]::Apex
+      # Use pattern: Apex::[Class1,Class2]::Apex
       # ---------------------------------
       - name: Set Tests to Run
         if: steps.check_delta.outputs.skip == 'false'
@@ -114,7 +111,7 @@ jobs:
       # ---------------------------------
       # Deploy Delta
       # ---------------------------------
-      - name: Deploy Delta
+      - name: Deploy Delta to QA
         if: steps.check_delta.outputs.skip == 'false'
         run: |
           TESTS="${{ steps.tests.outputs.tests }}"
@@ -125,8 +122,7 @@ jobs:
               --source-dir delta \
               --target-org qa \
               --test-level RunRelevantTests \
-              --wait 30 \
-              --ignore-warnings
+              --wait 30
 
           elif [ "$TESTS" = "all" ]; then
             echo "Running all tests..."
@@ -134,8 +130,7 @@ jobs:
               --source-dir delta \
               --target-org qa \
               --test-level RunAllTestsInOrg \
-              --wait 30 \
-              --ignore-warnings
+              --wait 30
 
           else
             echo "Running specified tests: $TESTS"
@@ -144,12 +139,11 @@ jobs:
               --target-org qa \
               --test-level RunSpecifiedTests \
               --tests "$TESTS" \
-              --wait 30 \
-              --ignore-warnings
+              --wait 30
 
       # ---------------------------------
       # Success
       # ---------------------------------
       - name: Success
         if: success()
-        run: echo "Deployment completed successfully."
+        run: echo "Deployment to QA completed successfully."
