@@ -48,6 +48,8 @@ jobs:
       - name: Install SFDX-Git-Delta
         run: |
           npm install -g sfdx-git-delta
+          # Adiciona binários globais ao PATH
+          export PATH="$PATH:$(npm bin -g)"
           sgd --version
 
       # ---------------------------------
@@ -74,9 +76,9 @@ jobs:
         run: |
           mkdir -p delta
           BASE_BRANCH=${{ github.event.pull_request.base.ref }}
-
           git fetch origin $BASE_BRANCH
-
+          # Adiciona binários globais ao PATH
+          export PATH="$PATH:$(npm bin -g)"
           sgd source delta \
             --to HEAD \
             --from origin/$BASE_BRANCH \
@@ -147,7 +149,6 @@ jobs:
               --tests "${{ steps.tests.outputs.tests }}" \
               --coverage-formatters json \
               --results-dir coverage
-          fi
 
       # ---------------------------------
       # Enforce Coverage >= 85%
@@ -156,7 +157,6 @@ jobs:
         if: steps.check_delta.outputs.skip == 'false'
         run: |
           COVERAGE=$(jq '.result.summary.testRunCoverage' coverage/test-result-codecoverage.json)
-
           echo "Org Coverage: $COVERAGE%"
 
           if (( $(echo "$COVERAGE < 85" | bc -l) )); then
