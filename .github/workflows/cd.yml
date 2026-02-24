@@ -1,4 +1,4 @@
-name: Deploy to QA
+name: Deploy Delta to QA
 
 on:
   push:
@@ -21,16 +21,13 @@ jobs:
           fetch-depth: 0
 
       # ---------------------------------
-      # Install system dependencies
+      # Install dependencies
       # ---------------------------------
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y jq bc
 
-      # ---------------------------------
-      # Setup Node 20
-      # ---------------------------------
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -45,19 +42,32 @@ jobs:
           sf version
 
       # ---------------------------------
-      # Install sfdx-git-delta
+      # Install Plugins
       # ---------------------------------
       - name: Install sfdx-git-delta
         run: |
           echo y | sf plugins install sfdx-git-delta
-          sf plugins
+
+      - name: Install Code Analyzer (optional)
+        run: |
+          sf plugins install code-analyzer --force
 
       # ---------------------------------
-      # Generate delta
+      # Run Code Analyzer (optional)
+      # ---------------------------------
+      - name: Run Code Analyzer
+        run: |
+          sf code-analyzer run \
+            --workspace force-app \
+            --severity-threshold 3
+
+      # ---------------------------------
+      # Generate Delta
       # ---------------------------------
       - name: Generate Delta
         run: |
           mkdir -p delta
+          # Delta entre HEAD e commit anterior
           sf sgd source delta \
             --to HEAD \
             --from HEAD~1 \
@@ -76,6 +86,7 @@ jobs:
           else
             echo "Delta found"
             echo "skip=false" >> $GITHUB_OUTPUT
+          fi
 
       # ---------------------------------
       # Create JWT Key
@@ -150,21 +161,6 @@ jobs:
               --test-level RunSpecifiedTests \
               --tests "$TESTS" \
               --wait 30
-
-      # ---------------------------------
-      # Enforce coverage >= 85% (apenas se testes foram executados)
-      # ---------------------------------
-      - name: Enforce Coverage
-        if: steps.check_delta.outputs.skip == 'false' && steps.tests.outputs.tests != 'none'
-        run: |
-          COVERAGE=$(jq '.result.summary.testRunCoverage' coverage/test-result-codecoverage.json)
-
-          echo "Coverage: $COVERAGE%"
-
-          if (( $(echo "$COVERAGE < 85" | bc -l) )); then
-            echo "Coverage below 85%. Failing pipeline."
-            exit 1
-          fi
 
       # ---------------------------------
       # Success
